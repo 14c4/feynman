@@ -1,0 +1,65 @@
+.study-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 28px; }
+.study-heading h1 { font-size: 2rem; margin: 8px 0 0; }
+.student-avatar { width: 152px; height: 152px; color: #e6eee1; border: 7px solid #f5f7f1; outline: 1px solid #e2e9dc; border-radius: 50%; overflow: hidden; margin: 0 auto; }
+.student-avatar--small { width: 110px; height: 110px; }
+.preparation-panel { padding: 42px 52px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); text-align: center; }
+.preparation-panel > .eyebrow { margin-top: 28px; }
+.preparation-panel h2 { margin: 12px 0 18px; font-size: 2rem; }
+.preparation-prompt { font-size: 1.05rem; max-width: 480px; margin: 0 auto 27px; }
+.preparation-steps { list-style: none; padding: 0; margin: 0 auto 28px; max-width: 330px; text-align: left; display: grid; gap: 13px; font-size: .87rem; }
+.preparation-steps li { display: flex; align-items: center; gap: 13px; }
+.preparation-steps li span { display: grid; place-content: center; width: 27px; height: 27px; background: var(--sage); border-radius: 50%; color: #5b765d; font-size: .72rem; }
+.preparation-panel .button-row { justify-content: center; margin-top: 24px; }
+.student-stage { text-align: center; padding: 30px 28px 0; }
+.student-stage h2 { font-size: 1.2rem; margin: 21px 0 9px; }
+.microphone-control { display: flex; flex-direction: column; align-items: center; gap: 12px; margin-top: 24px; }
+.microphone-control .microphone-button:disabled { width: 88px; height: 88px; padding: 0; border-radius: 50%; background: var(--accent); color: white; border: 6px solid #e4ece0; box-shadow: 0 0 0 1px #d8e2d2; }
+.microphone-label { font-size: .88rem; font-weight: 550; }
+.microphone-status { color: var(--muted); font-size: .72rem; margin: -4px 0 0; }
+.latest-exchange { background: #eef2e9; border: 1px solid #e1e8da; border-radius: var(--radius); padding: 24px 28px; margin-top: 29px; text-align: left; }
+.latest-exchange > p:not(.student-placeholder) { margin: 10px 0 16px; line-height: 1.65; font-size: .95rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.student-placeholder { padding-top: 14px; border-top: 1px solid #d9e1d3; font-size: .76rem; color: var(--muted); margin: 0; }
+.study-page > .transcript-panel { margin-top: 24px; }
+.text-fallback { margin-top: 24px; border-top: 1px solid var(--line); color: var(--muted); }
+.text-fallback > summary { padding: 18px 0; cursor: pointer; font-size: .8rem; }
+.text-fallback-hint { float: right; font-size: .68rem; }
+.explanation-form { margin: 0; padding-bottom: 8px; }
+.input-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.input-heading label { font-size: .9rem; font-weight: 550; }
+.explanation-form textarea { width: 100%; display: block; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--text); padding: 18px 20px; resize: vertical; min-height: 96px; font-size: .9rem; line-height: 1.7; }
+.explanation-form textarea::placeholder { color: #818980; }
+.input-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 12px; }
+.input-footer p { margin: 0; font-size: .72rem; }
+.input-footer .button { font-size: .76rem; }
+.transcript-panel { border: 1px solid var(--line); background: #fcfdfb; border-radius: 10px; text-align: left; overflow: hidden; }
+.transcript-panel summary { cursor: pointer; padding: 17px 20px; font-size: .8rem; color: #51624f; }
+.transcript-count { float: right; color: var(--muted); font-size: .7rem; }
+.transcript-list { list-style: none; padding: 0 20px; margin: 0; max-height: 400px; overflow-y: auto; }
+.transcript-list li { padding: 18px 0; border-top: 1px solid var(--line); }
+.transcript-meta { display: flex; align-items: center; gap: 13px; font-size: .72rem; }
+.transcript-meta span { color: var(--muted); font-size: .67rem; }
+.transcript-list p { white-space: pre-wrap; overflow-wrap: anywhere; margin: 10px 0 0; font-size: .85rem; }
+.transcript-empty { padding: 0 20px 16px; margin: 0; font-size: .8rem; }
+.session-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 22px; }
+.finish-controls { display: flex; align-items: center; gap: 12px; }
+.session-controls .button { font-size: .77rem; padding-inline: 14px; }
+.finish-help { width: 100%; text-align: right; margin: 0; }
+.draft-dialog { max-width: 460px; width: calc(100% - 40px); padding: 30px; border: 1px solid var(--line); border-radius: var(--radius); color: var(--text); }
+.draft-dialog::backdrop { background: rgb(28 43 33 / 35%); }
+.draft-dialog h2 { margin-top: 14px; }
+.dialog-actions { display: grid; gap: 10px; margin-top: 20px; }
+@media (max-width: 640px) {
+  .preparation-panel { padding: 32px 22px; }
+  .preparation-panel h2 { font-size: 1.65rem; }
+  .student-stage { padding: 22px 0 0; }
+  .latest-exchange { padding: 20px; }
+  .input-footer { align-items: flex-start; }
+  .input-footer p { max-width: 145px; }
+  .session-controls, .finish-controls { width: 100%; }
+  .finish-controls { justify-content: space-between; }
+  .microphone-status { font-size: .64rem; }
+  .transcript-panel summary { padding: 16px 12px; font-size: .75rem; }
+  .transcript-count { font-size: .63rem; }
+  .text-fallback-hint { font-size: .61rem; }
+  .explanation-form textarea { padding: 15px; }
+}

@@ -1,0 +1,22 @@
+.home-intro { padding: 48px 0 36px; text-align: center; }
+.home-intro h1 { margin: 0; font-size: clamp(2rem, 4vw, 3rem); font-weight: 500; line-height: 1.2; letter-spacing: -.04em; }
+.topic-section { margin-bottom: 25px; }
+.topic-section .section-heading { margin-bottom: 23px; align-items: flex-end; }
+.topic-section h2 { font-size: 1.45rem; }
+.topic-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+.topic-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 27px; display: flex; align-items: flex-start; flex-direction: column; }
+.topic-symbol { background: #edf2e9; width: 47px; height: 47px; border-radius: 13px; display: grid; place-content: center; font-family: Georgia, serif; font-size: 29px; color: #688364; margin-bottom: 25px; }
+.topic-card--derivatives .topic-symbol { background: #eeedf4; color: #827797; }
+.topic-card--photosynthesis .topic-symbol { background: #f5f0df; color: #9b8a53; }
+.topic-card > .eyebrow { font-size: .62rem; }
+.topic-card h3 { margin: 11px 0 10px; font-size: 1.38rem; }
+.topic-card p { color: var(--muted); font-size: .84rem; margin-bottom: 27px; flex: 1; }
+.topic-card .button { width: 100%; justify-content: space-between; font-size: .77rem; }
+@media (max-width: 820px) { .topic-grid { gap: 12px; } .topic-card { padding: 20px; } }
+@media (max-width: 640px) {
+  .home-intro { padding: 32px 0 28px; }
+  .topic-grid { grid-template-columns: 1fr; gap: 16px; }
+  .topic-card { padding: 25px; }
+  .topic-section h2 { font-size: 1.35rem; }
+  .topic-symbol { margin-bottom: 20px; }
+}

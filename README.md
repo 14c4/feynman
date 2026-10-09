@@ -1,0 +1,84 @@
+# feynman.ai
+
+A Feynman Technique learning app: choose a concept, explain it to a curious student, reflect, and retry. This foundation includes a real session lifecycle, a text-entry development fallback, and a small backend ready for future integration.
+
+## Run locally
+
+Use **Node.js 24 LTS** (minimum 22.12) and npm.
+
+```sh
+npm install
+npm run dev
+```
+
+Open the local URL printed by Vite (normally `http://localhost:5173`). The frontend works independently of the backend. In a second terminal, optionally start the API skeleton:
+
+```sh
+npm run dev:server
+```
+
+Health endpoint: `http://127.0.0.1:3001/api/health`. Vite proxies `/api` requests to the backend in development. Copy `.env.example` to `.env` only when needed; no variables are required now. Restart Vite if you change `PORT`. `HOST` defaults to `127.0.0.1`; use a compatible local bind address for the dev proxy.
+
+## What works
+
+- Topic selection → preparation → active study → completion → results → linked retry.
+- Prominent microphone control with an expandable **Use text instead** fallback below the session controls; saved explanations appear in the transcript and blank input is rejected.
+- Unsaved text prompts before in-app navigation/finish; browser refresh warns about an unsaved draft.
+- Attempt history for the same topic, retained for this browser visit.
+- Recovery views for invalid URLs and sessions lost after refresh.
+- Responsive layouts, keyboard focus, labeled forms, and a native save/discard dialog.
+
+Voice controls are disabled. No audio is recorded, no student replies are generated, and no explanation is evaluated. Results include **one clearly labeled Recursion example**, with its own sample transcript and evidence. It is never attached to the user's session, including when the user studies a different topic.
+
+**Sessions live in React memory. Refreshing or closing the tab clears them.** Leaving an unfinished session marks it abandoned; completed transcripts remain read-only. Retries create new sessions rather than overwriting prior attempts. Attempt numbers include abandoned preparations; comparison lists show completed attempts only.
+
+## Structure and ownership
+
+| Location | Purpose | Primary owner |
+| --- | --- | --- |
+| `src/features/topics/` | Topic selection and learning content | A (UI), B (`topics.ts`) |
+| `src/features/study/` | Preparation, avatar, text input, transcript, controls | A |
+| `src/features/feedback/` | Results and future comparison layout | A (UI), B (`sampleFeedback.ts`) |
+| `src/components/`, `src/styles/` | Shared UI and design tokens | A |
+| `src/services/contracts/voice.ts` | Future ElevenLabs lifecycle contract | A |
+| `src/services/contracts/student.ts`, `evaluation.ts` | Future Gemini service contracts | B |
+| `shared/types.ts` | Domain types usable by client and server | Agreed together; C coordinates |
+| `src/state/`, `src/app/` | Session state, route lifecycle, navigation | C |
+| `server/`, `tests/`, root configuration | Backend skeleton, verification, setup | C |
+
+Keep feature-specific components and CSS inside their features. Scope selectors (`topic-*`, `study-*`, `concept-*`) and use shared CSS tokens. Coordinate shared-type and dependency changes; C owns lockfile updates. No state-management, component, or backend framework is required.
+
+## Integration boundaries
+
+- **ElevenLabs:** implement `VoiceService` and `VoiceConnection`. Enable controls only when a real adapter is ready. Disconnect must finish transcript delivery and cleanup before evaluation starts.
+- **Gemini student reasoning:** implement `StudentReasoningService`. The future integration layer connects reasoning to the voice conversation; transcription and orchestration are still team decisions.
+- **Gemini evaluation:** implement `EvaluationService`, returning concept IDs and evidence message IDs from the actual transcript. Add evaluation state actions and a real-results render path when this is connected; the empty evaluation map/status fields reserve that location now.
+- **Backend:** provider keys stay server-side. Never prefix credentials with `VITE_`, which exposes values to the browser. Server startup loads an optional root `.env`; no keys are read by the current routes.
+
+`server/routes.ts` provides:
+
+| Endpoint | Current response |
+| --- | --- |
+| `GET /api/health` | `200`, basic service status |
+| `POST /api/voice/session` | `501`, integration pending; payload TBD |
+| `POST /api/student/reply` | `501`, integration pending |
+| `POST /api/evaluations` | `501`, integration pending |
+| Other requests | `404`, structured error |
+
+The POST endpoints do not parse payloads or contact providers. Add payload validation, real adapters, and response mapping during integration. UI components should consume the contracts/domain types rather than vendor SDK types.
+
+## Checks and build
+
+```sh
+npm run lint
+npm test
+npm run build
+```
+
+Build typechecks the frontend, configuration, backend, and tests, then writes the frontend to `dist/`. Tests use Node's built-in runner for session transition integrity and backend responses. `npm run typecheck` runs just TypeScript; `npm run preview` previews the frontend production build. `npm run start:server` runs the skeleton without watching (it currently requires the `tsx` development dependency).
+
+Manual smoke check: try all three topics, expand **Use text instead**, enter/save text, expand the transcript, finish, retry, and complete a second attempt. Test save/discard/stay when navigating with unsaved text, invalid session URLs, and a narrow mobile viewport.
+
+## Deployment notes
+
+Deploy `dist/` to a static host with an **SPA fallback to `index.html`** for `/study/*` and `/results/*`. Vite's `/api` proxy is development-only. When integrations are ready, configure the deployed host to forward `/api` to the backend or add a public API base URL. No deployment provider or production backend infrastructure is configured yet.
