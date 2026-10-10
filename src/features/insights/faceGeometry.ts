@@ -14,18 +14,11 @@ export interface FaceObservation {
   at: number;
   /** Faces found in the frame. */
   faces: number;
-  /** Tight bounds of the primary face's landmarks. */
+  /** Tight bounds of the face (from a minimal detection, no landmark mesh). */
   bounds: Box;
-  /** Landmark subset for drawing, as [x0, y0, x1, y1, …]. */
-  points: Float32Array;
-  pose: HeadPose;
-  /** Average eye-blink blendshape score, 0 (open) – 1 (closed). */
-  eyeClosure: number;
   /** Mean luma (0–255) of the face region, sampled a few times a second. */
   brightness?: number;
 }
-
-export interface HeadPose { yaw: number; pitch: number; roll: number }
 
 export function boundsOf(points: ArrayLike<number>): Box {
   let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
@@ -67,57 +60,12 @@ export function coverMapping(frameWidth: number, frameHeight: number, elementWid
   return { x: (u: number) => offsetX + u * width, y: (v: number) => offsetY + v * height, width, height };
 }
 
-const DEG = 180 / Math.PI;
-/** Yaw, pitch and roll (degrees) from MediaPipe's 4×4 column-major facial transformation matrix. */
-export function headPose(matrix: ArrayLike<number>): HeadPose {
-  const r00 = matrix[0]!; const r10 = matrix[1]!; const r20 = matrix[2]!;
-  const r21 = matrix[6]!; const r22 = matrix[10]!;
-  return {
-    yaw: Math.atan2(-r20, Math.hypot(r21, r22)) * DEG,
-    pitch: Math.atan2(r21, r22) * DEG,
-    roll: Math.atan2(r10, r00) * DEG,
-  };
-}
-
-/**
- * Counts blinks from per-frame eye-closure scores with hysteresis. A closure longer than
- * `maxBlinkMs` counts as eyes closed, not a blink.
- */
-export class BlinkCounter {
-  private closedAt?: number;
-  private blinks: number[] = [];
-  private since?: number;
-  constructor(private readonly closeAbove = 0.55, private readonly openBelow = 0.35, private readonly maxBlinkMs = 500, private readonly windowMs = 60_000) {}
-
-  push(atMs: number, closure: number) {
-    this.since ??= atMs;
-    if (this.closedAt === undefined && closure >= this.closeAbove) this.closedAt = atMs;
-    else if (this.closedAt !== undefined && closure <= this.openBelow) {
-      if (atMs - this.closedAt <= this.maxBlinkMs) this.blinks.push(atMs);
-      this.closedAt = undefined;
-    }
-    while (this.blinks.length && atMs - this.blinks[0]! > this.windowMs) this.blinks.shift();
-  }
-
-  get closed() { return this.closedAt !== undefined; }
-
-  /** Blinks per minute over the last minute; undefined until `minMs` of face time has passed. */
-  perMinute(nowMs: number, minMs = 20_000): number | undefined {
-    if (this.since === undefined) return undefined;
-    const span = Math.min(this.windowMs, nowMs - this.since);
-    return span >= minMs ? Math.round((this.blinks.length * 60_000) / span) : undefined;
-  }
-
-  /** Face left the frame: keep counts, but a half-finished blink is discarded. */
-  interrupt() { this.closedAt = undefined; }
-}
-
-export type FramingCode = 'ok' | 'multiple' | 'too_far' | 'too_close' | 'off_center' | 'turned' | 'too_dark' | 'too_bright';
+export type FramingCode = 'ok' | 'multiple' | 'too_far' | 'too_close' | 'off_center' | 'too_dark' | 'too_bright';
 export interface Framing { code: FramingCode; message: string }
 
 /** Plain camera framing feedback from the local tracker, most important issue first. */
-export function framingFor(observation: Pick<FaceObservation, 'faces' | 'bounds' | 'pose' | 'brightness'>): Framing {
-  const { bounds, pose, brightness } = observation;
+export function framingFor(observation: Pick<FaceObservation, 'faces' | 'bounds' | 'brightness'>): Framing {
+  const { bounds, brightness } = observation;
   const cx = bounds.x + bounds.w / 2; const cy = bounds.y + bounds.h / 2;
   if (observation.faces > 1) return { code: 'multiple', message: 'More than one face is in view. Presage measures one person at a time.' };
   if (brightness !== undefined && brightness < 55) return { code: 'too_dark', message: 'Your face is in shadow. Face a window or lamp.' };
@@ -125,7 +73,6 @@ export function framingFor(observation: Pick<FaceObservation, 'faces' | 'bounds'
   if (bounds.h < 0.22) return { code: 'too_far', message: 'Move a little closer to the camera.' };
   if (bounds.h > 0.75) return { code: 'too_close', message: 'Sit back a little so your whole face fits.' };
   if (Math.abs(cx - 0.5) > 0.22 || Math.abs(cy - 0.48) > 0.22) return { code: 'off_center', message: 'Centre your face in the frame.' };
-  if (Math.abs(pose.yaw) > 25 || Math.abs(pose.pitch) > 25) return { code: 'turned', message: 'Face the camera directly.' };
   return { code: 'ok', message: 'Well framed.' };
 }
 

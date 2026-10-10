@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import jpeg from 'jpeg-js';
 import { packBatch, type EncodedFrame } from '../src/features/insights/cameraPipeline.js';
-import { BlinkCounter, coverMapping, framingFor, headPose, presageStage, smoothBox, squareAround, type StageInput } from '../src/features/insights/faceGeometry.js';
+import { coverMapping, framingFor, presageStage, smoothBox, squareAround, type StageInput } from '../src/features/insights/faceGeometry.js';
 import { faceFromMetrics, hrvFromMetrics, MonitoringService, type PresageModule } from '../server/physiology.js';
 
 test('the tracking square is square on screen, centred on the face, and steady against jitter', () => {
@@ -20,26 +20,12 @@ test('the tracking square is square on screen, centred on the face, and steady a
   assert.equal(map.x(0.5), 150); assert.equal(map.y(0), 0); assert.equal(map.width, 400);
 });
 
-test('head pose, blink rate and framing come from real tracker values', () => {
-  assert.deepEqual(Object.values(headPose([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])).map((value) => Math.round(Math.abs(value))), [0, 0, 0]);
-  const c = Math.cos(Math.PI / 6); const s = Math.sin(Math.PI / 6);
-  assert.equal(Math.round(headPose([c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1]).yaw), 30);
-
-  const blinks = new BlinkCounter();
-  for (let at = 0; at <= 30_000; at += 50) blinks.push(at, at % 3000 < 150 && at > 0 ? 0.9 : 0.1);
-  assert.equal(blinks.perMinute(30_000), 20);
-  const long = new BlinkCounter();
-  for (let at = 0; at <= 25_000; at += 50) long.push(at, at > 1000 && at < 1800 ? 0.9 : 0.1);
-  assert.equal(long.perMinute(25_000), 0, 'eyes closed for 800 ms is not a blink');
-  assert.equal(new BlinkCounter().perMinute(5000), undefined, 'no rate before enough face time');
-
-  const pose = { yaw: 0, pitch: 0, roll: 0 };
+test('framing hints come from the detected face box and measured brightness', () => {
   const centred = { x: 0.35, y: 0.25, w: 0.3, h: 0.45 };
-  assert.equal(framingFor({ faces: 1, bounds: centred, pose, brightness: 120 }).code, 'ok');
-  assert.equal(framingFor({ faces: 2, bounds: centred, pose }).code, 'multiple');
-  assert.equal(framingFor({ faces: 1, bounds: centred, pose, brightness: 30 }).code, 'too_dark');
-  assert.equal(framingFor({ faces: 1, bounds: { ...centred, h: 0.1 }, pose }).code, 'too_far');
-  assert.equal(framingFor({ faces: 1, bounds: centred, pose: { ...pose, yaw: 40 } }).code, 'turned');
+  assert.equal(framingFor({ faces: 1, bounds: centred, brightness: 120 }).code, 'ok');
+  assert.equal(framingFor({ faces: 2, bounds: centred }).code, 'multiple');
+  assert.equal(framingFor({ faces: 1, bounds: centred, brightness: 30 }).code, 'too_dark');
+  assert.equal(framingFor({ faces: 1, bounds: { ...centred, h: 0.1 } }).code, 'too_far');
 });
 
 test('the panel headline follows real signals and treats warm-up as collecting, not failure', () => {
@@ -105,7 +91,7 @@ test('JPEG batches are decoded in order on the server, and Presage face lock and
   const service = new MonitoringService({ env: { NODE_ENV: 'test', PRESAGE_API_KEY: 'k' }, loadPresage: async () => module });
   const window = await service.start('s', 'in_session');
   const sdk = FakeSdk.last!;
-  assert.ok(sdk.options.requestedMetrics!.includes(10) && !sdk.options.requestedMetrics!.includes(14), 'face metrics requested, expressions never');
+  assert.ok(!sdk.options.requestedMetrics!.some((metric) => [10, 11, 12, 14].includes(metric)), 'face metrics are opt-in, so not requested by default');
 
   const origin = Date.now() * 1000;
   const times = [0, 33_333, 66_667].map((offset) => origin + offset);
@@ -127,5 +113,14 @@ test('JPEG batches are decoded in order on the server, and Presage face lock and
   assert.throws(() => service.ingest('s', window.id, truncated, 96, 72, 30, 'jpeg'), /malformed/);
   const corrupt = Buffer.from(packBatch([{ ...jpegFrame(origin + 300_000), bytes: new Uint8Array(64).fill(7) }]));
   assert.throws(() => service.ingest('s', window.id, corrupt, 96, 72, 30, 'jpeg'), /could not be decoded/);
+  service.close();
+});
+
+test('face metrics are requested only when opted in, and expressions never', async () => {
+  const module: PresageModule = { SmartSpectraSDK: FakeSdk as unknown as PresageModule['SmartSpectraSDK'], decodeMetrics: () => ({}), faceMetrics: [10, 11, 12, 14] };
+  const service = new MonitoringService({ env: { NODE_ENV: 'test', PRESAGE_API_KEY: 'k', PRESAGE_FACE_METRICS: 'on' }, loadPresage: async () => module });
+  await service.start('s', 'in_session');
+  const requested = FakeSdk.last!.options.requestedMetrics!;
+  assert.ok([10, 11, 12].every((metric) => requested.includes(metric)) && !requested.includes(14));
   service.close();
 });

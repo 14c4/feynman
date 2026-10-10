@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { MonitoringStatus, PhysiologySample, PracticeSession, PresageFace } from '../../../shared/types';
+import type { PhysiologySample, PracticeSession } from '../../../shared/types';
 import { MONITORING_LIMITS } from '../../../shared/types';
 import { Button } from '../../components/Button';
 import { PracticeIcon, type PracticeIconName } from '../../components/practice/PracticeIcon';
@@ -15,24 +15,19 @@ function useNow(active: boolean, every = 1000) {
   return now;
 }
 
-const PRESAGE_FACE_FRESH_MS = 3000;
-const freshFace = (face: PresageFace | undefined, now: number) => face && now - Date.parse(face.at) < PRESAGE_FACE_FRESH_MS ? face : undefined;
-
 /* ---------- camera stage with the tracking overlay ---------- */
 
 /**
  * Draws the local tracker's face square and landmarks over the mirrored preview at display rate,
- * plus Presage's own face lock (dashed) when the SDK reports landmarks. The canvas shares the
+ * plus Presage's own face lock (dashed) when the SDK reports one. Boxes only, no landmark dots. The canvas shares the
  * video's mirror transform and `object-fit: cover` mapping, so overlays stay aligned at any size.
  */
-function TrackingOverlay({ video, store, presageFace }: { video: React.RefObject<HTMLVideoElement | null>; store?: TrackingStore; presageFace?: PresageFace }) {
+function TrackingOverlay({ video, store }: { video: React.RefObject<HTMLVideoElement | null>; store?: TrackingStore }) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const presage = useRef(presageFace);
-  presage.current = presageFace;
   useEffect(() => {
     let handle = 0; let box: Box | undefined; let fade = 0;
     const styles = getComputedStyle(document.documentElement);
-    const colors = { ok: styles.getPropertyValue('--presage-lock').trim() || '#5fd39a', warn: styles.getPropertyValue('--presage-warn').trim() || '#f0b84a', sdk: styles.getPropertyValue('--presage-sdk').trim() || '#7fb6e6' };
+    const colors = { ok: styles.getPropertyValue('--presage-lock').trim() || '#5fd39a', warn: styles.getPropertyValue('--presage-warn').trim() || '#f0b84a' };
     const draw = () => {
       handle = requestAnimationFrame(draw);
       const element = canvas.current; const source = video.current;
@@ -52,42 +47,20 @@ function TrackingOverlay({ video, store, presageFace }: { video: React.RefObject
       if (tracked && latest) { box = smoothBox(box, squareAround(latest.bounds, aspect)); fade = 1; }
       else if (box) { fade -= 0.04; if (fade <= 0) box = undefined; }
 
-      // Presage's own face lock, from the SDK's landmarks (about once a second).
-      const sdk = presage.current;
-      if (sdk?.box) {
-        context.save();
-        context.strokeStyle = colors.sdk; context.lineWidth = 1.25; context.setLineDash([5, 4]); context.globalAlpha = 0.9;
-        const x = map.x(sdk.box.x); const y = map.y(sdk.box.y);
-        context.strokeRect(x, y, map.x(sdk.box.x + sdk.box.w) - x, map.y(sdk.box.y + sdk.box.h) - y);
-        context.setLineDash([]); context.fillStyle = colors.sdk; context.globalAlpha = 0.7;
-        for (const [px, py] of sdk.points ?? []) { context.beginPath(); context.arc(map.x(px), map.y(py), 1.3, 0, Math.PI * 2); context.fill(); }
-        context.restore();
-      }
-
       if (!box) return;
       const x = map.x(box.x); const y = map.y(box.y); const side = map.x(box.x + box.w) - x;
       const framed = tracked && latest ? latest.bounds.h >= 0.22 && latest.bounds.h <= 0.75 && latest.faces === 1 : false;
       context.save();
       context.globalAlpha = Math.max(0, fade);
       context.strokeStyle = tracked ? (framed ? colors.ok : colors.warn) : colors.warn;
-      if (!tracked) context.setLineDash([6, 6]);
-      // Soft full square plus bold corners: readable on any background without boxing the face in.
-      context.lineWidth = 1; context.globalAlpha = Math.max(0, fade) * 0.45; context.strokeRect(x, y, side, side);
-      context.globalAlpha = Math.max(0, fade); context.lineWidth = 3; context.lineCap = 'round';
+      // Corner brackets only: readable on any background without boxing the face in.
+      context.globalAlpha = Math.max(0, fade); context.lineWidth = 2.5; context.lineCap = 'round';
       const arm = Math.max(12, side * 0.16);
       context.beginPath();
       for (const [cx, cy, dx, dy] of [[x, y, 1, 1], [x + side, y, -1, 1], [x, y + side, 1, -1], [x + side, y + side, -1, -1]] as const) {
         context.moveTo(cx + dx * arm, cy); context.lineTo(cx, cy); context.lineTo(cx, cy + dy * arm);
       }
       context.stroke();
-      if (tracked && latest) {
-        context.fillStyle = 'rgba(255,255,255,0.78)';
-        const points = latest.points;
-        for (let index = 0; index + 1 < points.length; index += 2) {
-          if (!points[index] && !points[index + 1]) continue;
-          context.beginPath(); context.arc(map.x(points[index]!), map.y(points[index + 1]!), 1.1, 0, Math.PI * 2); context.fill();
-        }
-      }
       context.restore();
     };
     handle = requestAnimationFrame(draw);
@@ -96,17 +69,16 @@ function TrackingOverlay({ video, store, presageFace }: { video: React.RefObject
   return <canvas ref={canvas} className="presage-overlay" aria-hidden="true" />;
 }
 
-function CameraStage({ state, stream, tracking, stage, guidance, presageFace, simulated }: { state: MonitorState; stream?: MediaStream; tracking?: TrackingStore; stage: Stage; guidance?: string; presageFace?: PresageFace; simulated: boolean }) {
+function CameraStage({ state, stream, tracking, stage, guidance, simulated }: { state: MonitorState; stream?: MediaStream; tracking?: TrackingStore; stage: Stage; guidance?: string; simulated: boolean }) {
   const video = useRef<HTMLVideoElement>(null);
   useEffect(() => { if (video.current) video.current.srcObject = stream ?? null; }, [stream]);
   return <div className="presage-stage" data-tone={stage.tone}>
     {stream ? <>
       <video ref={video} className="presage-video" autoPlay muted playsInline aria-label="Your camera preview. It is not recorded." />
-      <TrackingOverlay video={video} store={tracking} presageFace={presageFace} />
+      <TrackingOverlay video={video} store={tracking} />
     </> : <div className="presage-stage-empty"><PracticeIcon name="camera" size={28} /><span>{state.cameraNote ? 'Camera not in use' : 'Starting camera…'}</span></div>}
     <span className="presage-pill" data-tone={stage.tone}><i aria-hidden="true" />{stage.label}</span>
     {simulated && <span className="presage-tag presage-tag--sim">DEV SIMULATED</span>}
-    {!simulated && stream && <span className="presage-tag">Not recorded</span>}
     {guidance && <p className="presage-guidance">{guidance}</p>}
   </div>;
 }
@@ -131,39 +103,6 @@ function VitalTile({ icon, label, unit, sample, warmupMs, threshold, elapsedMs, 
     {value === undefined && remaining ? <span className="presage-warmup" role="progressbar" aria-label={`${label} warm-up`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)}><span style={{ width: `${progress * 100}%` }} /></span> : <Confidence value={sample?.confidence} threshold={threshold} />}
     <span className="presage-tile-note">{note}</span>
   </div>;
-}
-
-type CheckState = 'done' | 'active' | 'pending' | 'problem';
-function Check({ state, title, detail }: { state: CheckState; title: string; detail?: string }) {
-  return <li className="presage-check" data-state={state}>
-    <span className="presage-check-icon" aria-hidden="true">{state === 'done' ? <PracticeIcon name="check" size={11} strokeWidth={2.4} /> : state === 'problem' ? '!' : null}</span>
-    <span className="presage-check-text"><strong>{title}</strong>{detail && <small>{detail}</small>}</span>
-    <span className="sr-only">{state === 'done' ? 'working' : state === 'active' ? 'in progress' : state === 'problem' ? 'needs attention' : 'not started'}</span>
-  </li>;
-}
-
-function SignalChecklist({ state, status, simulated, now }: { state: MonitorState; status?: MonitoringStatus; simulated: boolean; now: number }) {
-  const tracking = state.tracking; const presage = status?.presage; const pipeline = status?.pipeline;
-  const valid = status?.window.samples.filter((sample) => sample.valid).length ?? 0;
-  const face = freshFace(presage?.face, now);
-  const cameraState: CheckState = state.cameraOn ? 'done' : state.cameraNote ? 'problem' : 'active';
-  const trackerState: CheckState = !state.cameraOn ? 'pending' : !tracking || tracking.tracker === 'loading' ? 'active' : tracking.tracker === 'unavailable' ? 'problem' : tracking.face === 'found' ? 'done' : tracking.face === 'lost' ? 'problem' : 'active';
-  const trackerDetail = !state.cameraOn ? 'Needs the camera' : !tracking || tracking.tracker === 'loading' ? 'Loading the face model…' : tracking.tracker === 'unavailable' ? 'Couldn’t load here; Presage still measures' :
-    tracking.face === 'found' ? `On this device${tracking.analysisFps ? ` · ${tracking.analysisFps} fps` : ''}${tracking.delegate ? ` · ${tracking.delegate}` : ''}` : tracking.face === 'lost' ? 'Face left the frame' : 'Looking for your face…';
-  const presageState: CheckState = simulated ? 'done' : !state.windowId ? (state.phase === 'requesting' ? 'pending' : 'active') : presage?.processing === 'error' ? 'problem' : (status?.window.framesReceived ?? 0) > 0 ? 'done' : 'active';
-  const presageDetail = simulated ? 'Simulated in development; no SDK' : !state.windowId ? (state.probe ? `Measuring camera: ${state.probe}` : 'Starting…')
-    : (status?.window.framesReceived ?? 0) > 0 ? [pipeline?.processedFps ? `${Math.round(pipeline.processedFps)} fps analysed` : 'Receiving frames', state.encoding === 'jpeg' ? 'JPEG upload' : state.encoding === 'rgb' ? 'raw upload' : '', presage?.processing && presage.processing !== 'running' ? presage.processing : ''].filter(Boolean).join(' · ') : 'Waiting for the first frames';
-  const lockState: CheckState = simulated ? 'pending' : status?.code === 'OK' || face?.box ? 'done' : status?.code ? 'problem' : 'pending';
-  const lockDetail = simulated ? 'Not available in simulation' : status?.code === 'OK' ? (face?.box ? 'Face landmarks locked' : 'Presage validation: OK') : status?.code ? status.hint || status.code.replaceAll('_', ' ').toLowerCase() : 'Waiting for Presage’s validation';
-  const readingState: CheckState = valid ? 'done' : (presage?.metricsPackets ?? 0) > 0 || (simulated && status) ? 'active' : 'pending';
-  const readingDetail = valid ? `${valid} reliable ${valid === 1 ? 'reading' : 'readings'} saved` : (presage?.metricsPackets ?? 0) > 0 || (simulated && status) ? 'Collecting; readings appear once reliable' : 'Starts after the face is locked';
-  return <ul className="presage-checks" aria-label="What’s working">
-    <Check state={cameraState} title="Camera" detail={state.cameraNote ?? (state.camera ? `${state.camera.label}${state.camera.fps ? ` · ${Math.round(state.camera.fps)} fps` : ''}` : state.cameraOn ? 'On' : 'Waiting for permission')} />
-    <Check state={trackerState} title="Face tracking" detail={trackerDetail} />
-    <Check state={presageState} title="Presage analysis" detail={presageDetail} />
-    <Check state={lockState} title="Presage face lock" detail={lockDetail} />
-    <Check state={readingState} title="Measurements" detail={readingDetail} />
-  </ul>;
 }
 
 /* ---------- the panel ---------- */
@@ -234,7 +173,6 @@ export function PresagePanel({ session, layout = 'rail' }: { session: PracticeSe
     processing: status?.presage?.processing, code: status?.code, metricsPackets: status?.presage?.metricsPackets ?? 0,
     freshValid, anyValid: status?.window.samples.some((sample) => sample.valid) ?? false,
   });
-  const presageFace = freshFace(status?.presage?.face, now);
   const framing = tracker?.framing;
   const guidance = state.phase === 'requesting' && state.probe ? `Measuring what your camera really delivers (${state.probe}).`
     : stage.id === 'searching' ? 'Look at the screen with your face in the frame.'
@@ -243,9 +181,6 @@ export function PresagePanel({ session, layout = 'rail' }: { session: PracticeSe
           : status?.hint ? status.hint : state.advice;
   const remaining = state.endsAt ? Math.max(0, Math.ceil((state.endsAt - now) / 1000)) : undefined;
   const collecting = simulated ? Boolean(status) : (status?.window.framesReceived ?? 0) > 0;
-  const blinks = status?.presage?.face?.blinksPerMinute ?? tracker?.blinksPerMinute;
-  const blinkSource = status?.presage?.face?.blinksPerMinute !== undefined ? 'Presage' : 'on device';
-  const hrv = status?.presage?.hrv;
 
   if (minimized) return <section className={className} aria-label="Presage camera insights">
     <div className="presage-mini">
@@ -264,28 +199,11 @@ export function PresagePanel({ session, layout = 'rail' }: { session: PracticeSe
       <button type="button" className="icon-button" aria-label="Minimise the Presage panel" onClick={() => setMinimized(true)}><PracticeIcon name="chevron" size={14} /></button>
     </header>
     <p className="sr-only" aria-live="polite">{stage.label}</p>
-    <CameraStage state={state} stream={stream} tracking={tracking} stage={stage} guidance={guidance} presageFace={presageFace} simulated={simulated} />
-    {(presageFace?.box || stream) && <ul className="presage-legend" aria-label="Overlay key">
-      {stream && <li><i className="lg-local" />Face tracking (on device)</li>}
-      {presageFace?.box && <li><i className="lg-sdk" />Presage face lock</li>}
-    </ul>}
-
+    <CameraStage state={state} stream={stream} tracking={tracking} stage={stage} guidance={guidance} simulated={simulated} />
     <div className="presage-tiles">
       <VitalTile icon="heart" label="Pulse" unit="bpm" sample={latest?.pulse} warmupMs={MONITORING_LIMITS.pulseWarmupMs} threshold={MONITORING_LIMITS.pulseMinConfidence} elapsedMs={status?.elapsedMs} collecting={collecting} />
       <VitalTile icon="wave" label="Breathing" unit="/min" sample={latest?.breathing} warmupMs={MONITORING_LIMITS.breathingWarmupMs} threshold={MONITORING_LIMITS.breathingMinConfidence} elapsedMs={status?.elapsedMs} collecting={collecting} />
     </div>
-    <dl className="presage-facts">
-      <div><dt>Blinks</dt><dd>{blinks !== undefined ? <>{blinks}<small>/min · {blinkSource}</small></> : <small>after 20s of tracking</small>}</dd></div>
-      <div><dt>Head</dt><dd>{tracker?.pose ? <>{framing?.code === 'ok' ? 'Facing camera' : framing?.code === 'turned' ? 'Turned away' : 'In view'}<small>{`yaw ${tracker.pose.yaw}° · pitch ${tracker.pose.pitch}°`}</small></> : <small>—</small>}</dd></div>
-      {status?.presage?.face?.talking !== undefined && <div><dt>Talking</dt><dd>{status.presage.face.talking ? 'Detected' : 'Not detected'}<small>Presage</small></dd></div>}
-      {hrv && <div><dt>HRV</dt><dd>{hrv.valid ? <>{hrv.rmssdMs}<small> ms RMSSD</small></> : <small>low confidence ({hrv.confidence})</small>}</dd></div>}
-    </dl>
-
-    <details className="presage-details" open={layout === 'rail'}>
-      <summary>What’s working<PracticeIcon name="chevron" size={12} /></summary>
-      <SignalChecklist state={state} status={status} simulated={simulated} now={now} />
-    </details>
-
     <footer className="presage-foot">
       <span className="small muted">{simulated ? 'Synthetic readings for testing.' : 'Reflective readings, not a diagnosis.'} Video isn’t stored.</span>
       <Button variant="secondary" size="sm" disabled={state.phase === 'stopping'} onClick={() => void stop()}><PracticeIcon name="stop" size={12} />{state.phase === 'stopping' ? 'Saving…' : 'Stop'}</Button>

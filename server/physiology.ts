@@ -326,8 +326,8 @@ export class MonitoringService {
 
   private async startPresage(live: Live) {
     const sdkModule = await this.module();
-    // PRESAGE_FACE_METRICS=off drops face metrics; metrics the key isn't authorized for are simply omitted by the SDK.
-    const face = this.env.PRESAGE_FACE_METRICS === 'off' ? [] : (sdkModule.faceMetrics ?? []).filter((metric) => metric !== EXPRESSIONS);
+    // Face metrics cost extra SDK processing and the app does not display them, so they are opt-in (PRESAGE_FACE_METRICS=on).
+    const face = this.env.PRESAGE_FACE_METRICS !== 'on' ? [] : (sdkModule.faceMetrics ?? []).filter((metric) => metric !== EXPRESSIONS);
     const requested = [...(sdkModule.breathingMetrics ?? [BREATHING_RATE]), ...(sdkModule.cardioMetrics ?? [PULSE_RATE]), ...face];
     const sdk = new sdkModule.SmartSpectraSDK({ apiKey: this.env.PRESAGE_API_KEY ?? '', requestedMetrics: [...new Set(requested)] });
     sdk.on('metrics', ((buffer: Buffer) => {
