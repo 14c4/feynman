@@ -1,4 +1,4 @@
-import type { PracticeSession, SessionAccess, VoiceCredentials } from '../../shared/types';
+import type { IntegrationHealth, PracticeSession, SessionAccess, VoiceCredentials } from '../../shared/types';
 import type { PracticeService } from './contracts/practice';
 
 export class PracticeApiError extends Error {
@@ -23,6 +23,7 @@ async function request<T>(path: string, method: string, token?: string, input?: 
 }
 
 const path = (id: string) => `/sessions/${encodeURIComponent(id)}`;
+export const loadIntegrationHealth = () => request<IntegrationHealth>('/health', 'GET');
 export const practiceApi: PracticeService = {
   create: (input) => request<SessionAccess>('/sessions', 'POST', undefined, input),
   load: (id, token) => request<PracticeSession>(path(id), 'GET', token),
@@ -31,4 +32,7 @@ export const practiceApi: PracticeService = {
   voice: (id, token) => request<VoiceCredentials>(`${path(id)}/voice`, 'POST', token, {}),
   registerConversation: (id, token, conversationId) => request<PracticeSession>(`${path(id)}/conversations`, 'POST', token, { conversationId }),
   finalizeConversation: (id, token, conversationId) => request<PracticeSession>(`${path(id)}/conversations/${encodeURIComponent(conversationId)}/finalize`, 'POST', token, {}),
+  remove: (id, token) => request<{ deleted: true }>(path(id), 'DELETE', token),
+  startTextConversation: (id, token) => request<PracticeSession>(`${path(id)}/conversations/text`, 'POST', token, {}),
+  sendTextMessage: (id, token, conversationId, text) => request<PracticeSession>(`${path(id)}/conversations/${encodeURIComponent(conversationId)}/messages`, 'POST', token, text === undefined ? {} : { text }),
 };

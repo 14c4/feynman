@@ -29,3 +29,20 @@ test('paused and submitted assessments cannot be edited locally', () => {
     assert.equal(sessionReducer(state, { type: 'draft', sessionId: 'one', attemptId: 'baseline', answer }), state);
   }
 });
+
+test('missing-server errors retain browser drafts and clear their status on retry', () => {
+  const state = sessionReducer(initialSessionState, { type: 'receive', session });
+  const missing = sessionReducer(state, { type: 'error', sessionId: 'one', message: 'Practice session not found.', status: 404 });
+  assert.equal(missing.sessions.one, session);
+  assert.equal(missing.errorStatuses.one, 404);
+  const retry = sessionReducer(missing, { type: 'error', sessionId: 'one', message: '' });
+  assert.equal(retry.errorStatuses.one, undefined);
+});
+
+test('removing sessions drops them with their busy and error state', () => {
+  const session = { id: 'a' } as unknown as PracticeSession;
+  const state = { ...initialSessionState, sessions: { a: session, b: { ...session, id: 'b' } }, busy: { a: true }, errors: { a: 'x' }, errorStatuses: { a: 404 } };
+  const next = sessionReducer(state, { type: 'remove', sessionIds: ['a'] });
+  assert.deepEqual(Object.keys(next.sessions), ['b']);
+  assert.deepEqual([next.busy, next.errors, next.errorStatuses], [{}, {}, {}]);
+});

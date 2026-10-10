@@ -20,7 +20,8 @@
     "@elevenlabs/react": "^1.17.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "react-router": "^7.13.0"
+    "react-router": "^7.13.0",
+    "unpdf": "^1.8.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

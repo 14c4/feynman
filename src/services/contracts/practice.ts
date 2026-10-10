@@ -8,4 +8,7 @@ export interface PracticeService {
   voice(id: string, token: string): Promise<VoiceCredentials>;
   registerConversation(id: string, token: string, conversationId: string): Promise<PracticeSession>;
   finalizeConversation(id: string, token: string, conversationId: string): Promise<PracticeSession>;
+  remove(id: string, token: string): Promise<{ deleted: true }>;
+  startTextConversation(id: string, token: string): Promise<PracticeSession>;
+  sendTextMessage(id: string, token: string, conversationId: string, text?: string): Promise<PracticeSession>;
 }

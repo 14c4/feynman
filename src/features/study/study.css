@@ -108,3 +108,18 @@
   .text-fallback-hint { font-size: .61rem; }
   .explanation-form textarea { padding: 15px; }
 }
+
+/* Teaching: voice/text switch, text conversation, transcript statuses */
+.mode-switch { display: inline-flex; gap: 4px; margin: 14px 0 6px; padding: 4px; border: 1px solid var(--line); border-radius: 22px; background: white; }
+.mode-switch button { border: 0; background: transparent; padding: 7px 13px; border-radius: 18px; font: inherit; font-size: .75rem; color: var(--muted); cursor: pointer; }
+.mode-switch button[aria-selected='true'] { background: #e5eee0; color: #2f4a3a; font-weight: 600; }
+.mode-switch button:disabled { cursor: not-allowed; opacity: .6; }
+.text-conversation { display: grid; gap: 10px; margin-top: 12px; text-align: left; }
+.text-conversation textarea { width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 12px; font: inherit; resize: vertical; }
+.chat-log { list-style: none; margin: 0; padding: 4px; max-height: 360px; overflow-y: auto; display: grid; gap: 10px; }
+.chat-message { padding: 10px 13px; border-radius: 12px; background: #f3f6ef; max-width: 90%; }
+.chat-message--learner { justify-self: end; background: #e1ecdb; }
+.chat-message strong { font-size: .7rem; color: #51624f; }
+.chat-message p { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .85rem; }
+.conversation-list { display: grid; gap: 10px; margin-top: 18px; }
+.results-comparison { margin: 4px 0 20px; }

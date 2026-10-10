@@ -2,9 +2,60 @@
 
 A Health-track test-readiness app for material you have already studied: answer three questions, talk through uncertain concepts with a curious student, answer three matched follow-up questions, and compare your responses. Optional nervousness ratings are self-reported, not diagnoses.
 
+## Current checkpoint — functional Stage 1
+
+The designed homepage/sidebar and shared assessment now use the existing session API: topic/notes → preparation/clarification → three server-issued baseline questions → saved answers/working → grading/retry → teaching stage. Back/next, skips, uncertainty, pause/resume and refresh recovery are verified. `/preview` remains an isolated visual prototype.
+
+To test without provider credits, use two terminals:
+
+```powershell
+# Terminal 1, from the repository
+$env:NODE_ENV = 'development'
+$env:PRACTICE_PROVIDER_MODE = 'mock'
+npm run dev:server
+```
+
+```powershell
+# Terminal 2
+npm run dev
+```
+
+Open `http://localhost:5173/` (or Vite's printed port). **DEV MOCK** is explicitly labeled: fixed arithmetic questions and deterministic test grades, not Gemini evaluation. No Gemini or ElevenLabs requests are made. Mock mode refuses production startup. Real adapters remain the default when `PRACTICE_PROVIDER_MODE` is absent or `real`.
+
+Optional API environment: `MOCK_PROVIDER_SCENARIO=normal|clarification|prepare-error-once|grade-error-once`, `MOCK_PROVIDER_DELAY_MS=0..10000`. Set one scenario value before starting/restarting the API. The failure scenarios fail once per process. Baseline fixture answers: `5`, `12`, `4`; a matching answer earns one test point, with nonempty working a second. Mock conversations are disabled at the Stage 1 checkpoint.
+
+Checks: typecheck passed; lint passed with zero warnings; 16 tests passed; build passed with the existing large-chunk advisory. API-backed browser checks passed normal/failure/refresh/interruption/restart paths, keyboard navigation and accessibility/responsive checks. No real provider calls were made.
+
+**Stopped for review.** Stage 2 conversation/text-only/follow-up/results integration is not started. Server sessions still require the original in-memory API process. See [the audit, exact changed files, verified behavior, blockers and Stage 3 plan](docs/functional-integration.md).
+
+## Interactive frontend prototype — earlier design checkpoint
+
+Run `npm run dev` and open **http://localhost:5173/preview** (use Vite’s printed port if different). The preview needs no backend or provider credentials. The live application remains at `/`; the preview’s **LIVE · Open live application** link returns there.
+
+| Preview URL | Experience |
+| --- | --- |
+| `/preview` or `/preview/practice` | Dashboard, topic/notes form, sample shortcuts, recent sessions and new-user empty state |
+| `/preview/baseline` | Three baseline questions, local drafts/working, uncertainty, skip/back/next, evaluation and failure states |
+| `/preview/conversation` | Alex’s avatar, six sample connection states, transcript reveal and local text alternative |
+| `/preview/followup` | Different matched questions using the same assessment presentation |
+| `/preview/results` | Example scores, concept comparison, answer/transcript review and optional reflection |
+| `/preview/history` | Search/filter sample sessions, resume/review and local completion state |
+
+Choose a sample subject, then **Start practicing**, or use the top screen selector and practice-stage links to inspect screens directly. Open **Explore assessment states** for loading/failure controls and a sample answer shortcut. Open **Explore conversation states** to switch between disconnected, connecting, listening, speaking, muted and error appearances. The microphone-shaped control changes a **sample visual state only**.
+
+The reviewed preview uses a leaner layout: decorative sidebar/footer slogans and dashboard/assessment explainer side panels have been removed. Side content is limited to useful controls, focus concepts and the transcript.
+
+**PREVIEW:** all questions, example grades, focus concepts, AI dialogue and historical entries are hand-authored fixtures. Your typed answers are ungraded and displayed separately from example responses. Editing the subject/notes does not generate new questions. Local drafts, text entries and pause/finish state survive navigation within the preview but reset on refresh or leaving it. One current local demonstration is kept alongside fixed history examples; opening another example replaces that demonstration.
+
+**LIVE:** the functional checkpoint above now applies the approved dashboard/assessment presentation to the practice API. Independent text-only conversation and the remaining conversation/results integration require further approval. The preview is lazy-loaded outside `SessionProvider`, makes no API or microphone requests, and never writes production session storage. The original prototype introduced no backend/dependency changes; current functional changes are recorded separately.
+
+Stage 1 checks: typecheck passed; lint passed with one pre-existing `SessionProvider.tsx` warning; all 8 existing tests passed; production build passed with its pre-existing bundle-size warning. Production-browser checks passed for six views at 320/390/768/1440 px, automated WCAG A/AA scans, the interactive sample cycle, keyboard activation, reduced motion, storage isolation and zero preview API/microphone calls. Live home/recovery routes and assessment navigation were smoke-tested (assessment used an injected UI test fixture, not real grading). Desktop/mobile screenshots were inspected. See [the audit, architecture and gated Stage 2–4 roadmap](docs/frontend-redesign.md).
+
+At the earlier design checkpoint, no live redesign integration, provider verification, commit or deployment was performed. The functional Stage 1 checkpoint above is the latest state.
+
 ## Current hackathon checkpoint
 
-The application is being integrated around **one complete practice cycle**. Home, the shared baseline/follow-up assessment, focused conversation, grading states and Results are wired to the practice API. Provider adapters make real Gemini/ElevenLabs requests; application behavior is not simulated.
+The application is being integrated around **one complete practice cycle**. Home, the shared baseline/follow-up assessment, focused conversation, grading states and Results have existing practice API wiring. Normal adapters make real Gemini/ElevenLabs requests; the explicit non-production provider mode above supplies isolated development fixtures. Full real conversation verification remains pending.
 
 - Start both the frontend (`npm run dev`) and API (`npm run dev:server`).
 - Configure server-only `GEMINI_API_KEY`, optional `GEMINI_MODEL` (default `gemini-2.5-flash`), `ELEVENLABS_API_KEY`, and `ELEVENLABS_AGENT_ID` in `.env`, using `.env.example` as a template. Restart the API after changes.
@@ -15,7 +66,7 @@ The application is being integrated around **one complete practice cycle**. Home
 
 `GET /api/health` reports configuration booleans only; these do not prove successful provider calls. The practice endpoints are `/api/sessions` and `/api/sessions/:id` with `prepare`, `submit`, `voice`, `recheck`, `pause`, `resume`, and `finish` actions. Conversation registration/history is supplementary; typed assessment responses determine scores.
 
-Checkpoint verification: `npm run typecheck` passed and `npm test` passed 8 tests. The single-cycle API test uses injected test providers to check state/API integration; separate bounded calls verified real Gemini generation and sample grading. Provider errors now identify Google's HTTP status and sanitized message, including temporary `503 UNAVAILABLE` high-demand failures. The complete preparation schema is required, preventing a ready response with missing questions. Browser checks, ElevenLabs audio, lint, and production build are still pending.
+Checkpoint verification: `npm run typecheck`, `npm run lint` (one existing warning), `npm test` (8 tests), and `npm run build` (existing chunk-size warning) passed at the frontend-prototype checkpoint. The single-cycle API test uses injected test providers to check state/API integration; earlier separate bounded calls verified real Gemini generation and sample grading. Provider errors identify Google's HTTP status and sanitized message, including temporary `503 UNAVAILABLE` high-demand failures. The complete preparation schema is required, preventing a ready response with missing questions. Preview browser verification is recorded above; a full live browser cycle, ElevenLabs audio and final provider transcript retrieval remain unverified.
 
 The sections below describe the **historical pre-pivot foundation** and are retained for reference until the first live cycle is verified.
 

@@ -85,6 +85,24 @@ export type NervousnessValue = 1 | 2 | 3 | 4 | 5;
 export interface PracticeConcept {
   id: string;
   title: string;
+  /** What the concept covers; never the answer to an assessment question. */
+  description?: string;
+}
+
+/** Public metadata only. Extracted text stays on the server. */
+export interface StudyMaterial {
+  id: string;
+  name: string;
+  kind: 'pdf' | 'text' | 'markdown';
+  characters: number;
+  pages?: number;
+  truncated: boolean;
+}
+
+export interface MaterialUpload {
+  name: string;
+  /** Base64 file contents without a data: URL prefix. */
+  data: string;
 }
 
 export interface PracticeQuestion {
@@ -133,9 +151,15 @@ export interface AssessmentAttempt {
 
 export interface ConversationSegment {
   id: string;
+  /** Older sessions omit this; those segments were voice conversations. */
+  channel?: 'voice' | 'text';
   transcriptStatus: 'pending' | 'ready' | 'incomplete';
   messages: TranscriptMessage[];
   startedAt: string;
+  endedAt?: string;
+  /** Voice transcript retrieval bookkeeping. */
+  checkAttempts?: number;
+  lastCheckedAt?: string;
 }
 
 export interface PracticeCycle {
@@ -155,10 +179,13 @@ export interface PreparationState {
 
 export interface PracticeSession {
   id: string;
+  /** Server-selected source. Optional for older browser snapshots. */
+  providerMode?: 'real' | 'mock';
   title: string;
   description: string;
   notes: string;
   scope: string;
+  materials?: StudyMaterial[];
   concepts: PracticeConcept[];
   blueprintVersion: number;
   stage: PracticeStage;
@@ -181,8 +208,10 @@ export interface SessionAccess {
 }
 
 export interface CreatePracticeInput {
+  topic?: string;
   description: string;
   notes?: string;
+  materials?: MaterialUpload[];
 }
 
 export interface UpdatePracticeInput {
@@ -208,11 +237,22 @@ export interface IntegrationHealth {
   service: 'feynman.ai';
   geminiConfigured: boolean;
   voiceConfigured: boolean;
+  providerMode?: 'real' | 'mock';
 }
 
+export const MATERIAL_LIMITS = {
+  files: 3,
+  fileBytes: 4 * 1024 * 1024,
+  totalBytes: 8 * 1024 * 1024,
+  extensions: ['.pdf', '.txt', '.md', '.markdown'],
+} as const;
+
 export const PRACTICE_LIMITS = {
+  topic: 100,
   description: 1200,
   notes: 20000,
+  textMessage: 2000,
+  textTurns: 30,
   answer: 6000,
   working: 6000,
   questions: 3,

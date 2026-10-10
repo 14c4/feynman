@@ -12,6 +12,12 @@ function Providers() {
 
 // A small data router enables unsaved-draft blocking; no loaders or actions.
 const router = createBrowserRouter([{
+  path: '/preview/:screen?',
+  lazy: async () => {
+    const { PreviewApp } = await import('../features/preview/PreviewApp');
+    return { Component: PreviewApp };
+  },
+}, {
   element: <Providers />,
   children: [{
     element: <AppLayout />,

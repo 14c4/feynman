@@ -4,20 +4,26 @@ export interface SessionState {
   sessions: Record<string, PracticeSession>;
   busy: Record<string, boolean>;
   errors: Record<string, string>;
+  errorStatuses: Record<string, number | undefined>;
 }
 
-export const initialSessionState: SessionState = { sessions: {}, busy: {}, errors: {} };
+export const initialSessionState: SessionState = { sessions: {}, busy: {}, errors: {}, errorStatuses: {} };
 
 export type SessionAction =
   | { type: 'receive'; session: PracticeSession }
   | { type: 'draft'; sessionId: string; attemptId: string; answer: AssessmentAnswer; index?: number }
+  | { type: 'remove'; sessionIds: string[] }
   | { type: 'busy'; sessionId: string; busy: boolean }
-  | { type: 'error'; sessionId: string; message: string };
+  | { type: 'error'; sessionId: string; message: string; status?: number };
 
 export function sessionReducer(state: SessionState, action: SessionAction): SessionState {
   if (action.type === 'receive') return { ...state, sessions: { ...state.sessions, [action.session.id]: action.session } };
+  if (action.type === 'remove') {
+    const drop = <T,>(record: Record<string, T>) => Object.fromEntries(Object.entries(record).filter(([id]) => !action.sessionIds.includes(id)));
+    return { sessions: drop(state.sessions), busy: drop(state.busy), errors: drop(state.errors), errorStatuses: drop(state.errorStatuses) };
+  }
   if (action.type === 'busy') return { ...state, busy: { ...state.busy, [action.sessionId]: action.busy } };
-  if (action.type === 'error') return { ...state, errors: { ...state.errors, [action.sessionId]: action.message } };
+  if (action.type === 'error') return { ...state, errors: { ...state.errors, [action.sessionId]: action.message }, errorStatuses: { ...state.errorStatuses, [action.sessionId]: action.status } };
   const session = state.sessions[action.sessionId];
   const attempt = session?.attempts.find((item) => item.id === action.attemptId);
   if (!session || !attempt || session.lifecycle !== 'active' || session.stage !== attempt.kind || attempt.submittedAt ||
