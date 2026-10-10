@@ -22,8 +22,8 @@ export function AppLayout() {
             <span>feynman<span className="brand-suffix">.ai</span></span>
           </Link>
           <nav aria-label="Main navigation" className="header-nav">
-            <Link to="/" aria-current={!isStudy && !isResults ? 'page' : undefined}>Topics</Link>
-            <span className="build-label">Development preview</span>
+            <Link to="/" aria-current={!isStudy && !isResults ? 'page' : undefined}>Practice</Link>
+            <span className="build-label">Test readiness</span>
           </nav>
         </div>
       </header>

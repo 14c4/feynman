@@ -48,6 +48,51 @@
 .draft-dialog::backdrop { background: rgb(28 43 33 / 35%); }
 .draft-dialog h2 { margin-top: 14px; }
 .dialog-actions { display: grid; gap: 10px; margin-top: 20px; }
+.assessment-card { padding: clamp(24px, 5vw, 48px); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 18px 60px rgb(46 66 47 / 7%); }
+.assessment-progress { display: flex; justify-content: space-between; align-items: center; gap: 12px; color: var(--muted); font-size: .78rem; }
+.progress-track { height: 4px; background: #e7ece4; border-radius: 9px; margin: 16px 0 30px; overflow: hidden; }
+.progress-track span { display: block; height: 100%; background: var(--accent); transition: width .25s ease; }
+.assessment-card h2 { font-size: clamp(1.3rem, 4vw, 1.8rem); line-height: 1.4; margin: 0 0 27px; }
+.assessment-card > label:not(.uncertainty-check) { display: block; margin: 18px 0 8px; font-size: .85rem; font-weight: 600; }
+.assessment-card textarea { display: block; width: 100%; resize: vertical; border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; background: #fff; color: var(--text); line-height: 1.6; }
+.uncertainty-check { display: flex; align-items: center; gap: 9px; margin-top: 18px; font-size: .82rem; }
+.uncertainty-check input { accent-color: var(--accent); width: 17px; height: 17px; }
+.assessment-actions { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 28px; }
+.assessment-reassurance { text-align: center; color: var(--muted); font-size: .76rem; margin: 20px 0; }
+.nervousness-prompt { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: -5px 0 18px; color: var(--muted); font-size: .78rem; }
+.nervousness-prompt > div, .rating-options { display: flex; align-items: center; gap: 7px; }
+.nervousness-prompt small { display: block; margin-top: 4px; }
+.nervousness-prompt button, .rating-options button { border: 1px solid var(--line); background: var(--surface); color: var(--text); border-radius: 50%; min-width: 35px; height: 35px; cursor: pointer; }
+.nervousness-prompt button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.nervousness-prompt .skip-rating, .rating-options button:last-child { border-radius: 20px; padding-inline: 12px; width: auto; }
+.inline-error { padding: 15px; border: 1px solid #ead5d2; border-radius: 12px; background: #fff8f7; }
+.loading-card { padding: 60px 25px; text-align: center; }
+.loading-orbit { display: block; width: 34px; height: 34px; margin: auto; border: 3px solid #dce6d8; border-top-color: var(--accent); border-radius: 50%; animation: practice-spin .8s linear infinite; }
+@keyframes practice-spin { to { transform: rotate(360deg); } }
+.preparation-panel > p { max-width: 470px; margin: 0 auto 22px; color: var(--muted); line-height: 1.65; }
+.clarification { text-align: left; margin: 20px auto; max-width: 500px; }
+.notes-preview { margin: 20px auto; max-width: 540px; text-align: left; padding: 13px 16px; background: #f5f7f2; border-radius: 10px; font-size: .82rem; }
+.notes-preview summary { cursor: pointer; }
+.notes-preview p { white-space: pre-wrap; max-height: 180px; overflow: auto; color: var(--muted); }
+.conversation-layout { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(220px, .7fr); gap: 28px; align-items: center; margin: 18px 0 28px; }
+.conversation-person { text-align: center; padding: 28px; background: #f6f8f3; border: 1px solid #e8ede4; border-radius: var(--radius); }
+.conversation-person h2 { margin: 22px 0 8px; font-size: 1.2rem; }
+.conversation-person > p { color: var(--muted); font-size: .85rem; line-height: 1.6; }
+.connection-pill { display: inline-flex; align-items: center; gap: 7px; margin-top: 15px; padding: 7px 11px; border-radius: 22px; background: white; font-size: .72rem; color: var(--muted); }
+.connection-dot { width: 7px; height: 7px; border-radius: 50%; background: #b2b7b0; }
+.connection-dot.is-connected { background: #548363; box-shadow: 0 0 0 3px #e1eee2; }
+.microphone-button { margin-top: 15px; }
+.typed-alternative { display: block; border: 0; background: none; margin: 18px auto 0; cursor: pointer; font: inherit; font-size: .82rem; }
+.typed-response { display: grid; gap: 10px; margin-top: 12px; text-align: left; }
+.typed-response textarea { width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 12px; font: inherit; resize: vertical; }
+.conversation-context { padding: 22px 5px; }
+.focus-chip { display: inline-block; margin: 13px 7px 0 0; padding: 8px 11px; border-radius: 22px; background: #eaf0e6; color: #385745; font-size: .76rem; }
+.conversation-guidance { display: flex; gap: 12px; margin-top: 30px; padding: 15px; background: #f6f7f3; border-radius: 12px; color: var(--muted); font-size: .8rem; line-height: 1.6; }
+.conversation-guidance span { color: #829877; font-size: 1.2rem; }
+.conversation-guidance p { margin: 0; }
+.session-controls { justify-content: space-between; align-items: center; }
+.session-controls > p { margin: 0; font-size: .8rem; }
+@media (max-width: 640px) { .conversation-layout { grid-template-columns: 1fr; gap: 5px; } .conversation-person { padding: 22px 17px; } .conversation-context { padding: 15px 4px; } .assessment-actions { align-items: flex-start; flex-direction: column-reverse; } .nervousness-prompt { align-items: flex-start; flex-direction: column; } }
 @media (max-width: 640px) {
   .preparation-panel { padding: 32px 22px; }
   .preparation-panel h2 { font-size: 1.65rem; }

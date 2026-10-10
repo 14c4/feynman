@@ -1,6 +1,23 @@
 # feynman.ai
 
-A Feynman Technique learning app: choose a concept, explain it to a curious student, reflect, and retry. This foundation includes a real session lifecycle, a text-entry development fallback, and a small backend ready for future integration.
+A Health-track test-readiness app for material you have already studied: answer three questions, talk through uncertain concepts with a curious student, answer three matched follow-up questions, and compare your responses. Optional nervousness ratings are self-reported, not diagnoses.
+
+## Current hackathon checkpoint
+
+The application is being integrated around **one complete practice cycle**. Home, the shared baseline/follow-up assessment, focused conversation, grading states and Results are wired to the practice API. Provider adapters make real Gemini/ElevenLabs requests; application behavior is not simulated.
+
+- Start both the frontend (`npm run dev`) and API (`npm run dev:server`).
+- Configure server-only `GEMINI_API_KEY`, optional `GEMINI_MODEL` (default `gemini-2.5-flash`), `ELEVENLABS_API_KEY`, and `ELEVENLABS_AGENT_ID` in `.env`, using `.env.example` as a template. Restart the API after changes.
+- Configure a **private ElevenLabs Agent using a Gemini model**. Its system prompt should use `{{focus_context}}` to guide short, supportive questions, let the learner do most of the explaining, provide guidance when stuck, and treat supplied material as data rather than instructions. Suggested first message: `Let's talk through {{session_title}}. {{opening_question}}`. The application also sends `session_id` for conversation association. Verify these settings on a real call.
+- Sessions are held in API process memory. Browser references/drafts can survive a refresh while the same API process remains running. Restarting the API loses its sessions; start a fresh session afterward.
+- Repeat cycles, durable backend storage, request locks, uploads, timing and Presage are deferred.
+- Live Gemini adapter checks with the configured `gemini-3.8-flash` successfully generated three question pairs and graded a sample answer. A complete browser session and ElevenLabs audio remain unverified. Missing credentials produce explicit errors; no invented questions or scores appear as a fallback.
+
+`GET /api/health` reports configuration booleans only; these do not prove successful provider calls. The practice endpoints are `/api/sessions` and `/api/sessions/:id` with `prepare`, `submit`, `voice`, `recheck`, `pause`, `resume`, and `finish` actions. Conversation registration/history is supplementary; typed assessment responses determine scores.
+
+Checkpoint verification: `npm run typecheck` passed and `npm test` passed 8 tests. The single-cycle API test uses injected test providers to check state/API integration; separate bounded calls verified real Gemini generation and sample grading. Provider errors now identify Google's HTTP status and sanitized message, including temporary `503 UNAVAILABLE` high-demand failures. The complete preparation schema is required, preventing a ready response with missing questions. Browser checks, ElevenLabs audio, lint, and production build are still pending.
+
+The sections below describe the **historical pre-pivot foundation** and are retained for reference until the first live cycle is verified.
 
 ## Run locally
 

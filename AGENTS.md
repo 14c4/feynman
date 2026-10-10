@@ -2,9 +2,42 @@
 
 ## Project overview
 
-feynman.ai helps a learner understand a concept by teaching it to a curious AI student. The learner does most of the explaining; the student asks short, relevant questions without immediately teaching the answer.
+feynman.ai is now a Health-track test-readiness app for material the learner has already studied. It combines short retrieval assessments, supportive verbal explanation, matched rechecks, and optional self-reported nervousness. It does not diagnose anxiety, infer anxiety from vital signs, or promise anxiety reduction.
 
-Workflow: choose or describe a concept → prepare → explain → answer questions → finish → receive evidence-based feedback → explain again using the same learning objective.
+Approved workflow: describe material (optional pasted notes) → three baseline questions → actual grading → focused curious-student conversation → three different matched recheck questions → concise reflection → another cycle or finish. One resumable session owns all stages and cycles.
+
+## Approved revamp — active instructions
+
+### Hackathon simplification — current priority
+
+The user narrowed implementation to ONE complete practice cycle and requested a checkpoint after typecheck. This overrides the broader R-series implementation scope below. Current priority: description → three Gemini baseline questions → actual grading → weak-concept ElevenLabs conversation → three paired follow-up questions → grading → comparison. Use in-memory single-process backend sessions, simple validated JSON and clear errors. Preserve private provider keys, bounded inputs, and untrusted-material separation. Durable server persistence, request locks, multi-user infrastructure, repeat cycles, uploads, timing, and Presage are deferred. Browser drafts are a convenience, not a guarantee after server restart. Stop at the current checkpoint and report changed files, verified behavior, demo gaps and the next smallest step before another major task.
+
+Checkpoint reached: single-cycle contracts, browser state/API wiring, assessment/conversation/results screens and in-memory backend are implemented. Application adapters call real providers; no simulated fallback is installed. Latest approved diagnostic fix: Gemini preparation now requires the complete JSON assessment shape; provider errors retain sanitized HTTP status/details; duplicate preparation messages are removed. `npm run typecheck` passed; `npm test` passed all 8 tests, including one-cycle API integration with injected TEST providers. `.env` now configures Gemini with `gemini-3.8-flash`. Real adapter calls successfully generated three concept pairs (six questions, about 8 seconds) and graded one complete sample answer (2/2 with validated evidence, about 42 seconds). These are bounded provider checks, not a verified full browser session. Intermittent Google HTTP 503 UNAVAILABLE/high-demand responses were observed and are now displayed clearly. ElevenLabs remains unconfigured; live voice, browser UI, and final history retrieval remain unverified. Lint/build have not been run at this narrowed checkpoint. Next smallest step: run a fresh browser session through baseline generation/grading, then configure and verify the private voice agent. Full R-series boxes below remain unchecked where their original acceptance extends beyond this checkpoint.
+
+The user approved implementation of the complete R-series plan. This supersedes the topic-centric target and M-series pending-approval boundaries below; the M-series is historical context, not the active task list. Preserve the existing shell, routes, avatar, green/neutral tokens, and one React domain store.
+
+- Public contracts are `PracticeSession`, `AssessmentAttempt`, `PracticeCycle`, and question/grade types in `shared/types.ts`. Legacy topic types remain only where old fixtures/components still require them during migration.
+- Backend-only blueprints contain expected answers, rubrics, and reserved questions. Browser responses and the voice agent never receive reserved recheck questions/answers.
+- Stages: preparing, baseline, baseline_evaluating, teaching, recheck, recheck_evaluating, results. Lifecycle active/paused/completed is separate. Evaluation failures preserve answers and support retry.
+- Same-browser anonymous resume uses browser access references/local drafts plus a disk-backed single-instance server store. Never silently abandon on navigation. Do not persist live credentials.
+- Three questions each, typed answers and optional working, skip/uncertainty, no mid-test answers or correction. Same component for baseline/recheck. Actual 0–2 rubric grades; deterministic server totals; comparisons describe these questions, not mastery.
+- Practice again retains scope/rubrics and creates another conversation/recheck cycle without overwriting prior work; later rechecks use fresh questions.
+- Preferred voice architecture remains private ElevenLabs Agent configured with Gemini, pending real verification. Only actual status/mode events. Final transcript retrieval is separate from disconnect; typed responses determine assessment scores.
+- Optional nervousness is 1–5 self-report, never a diagnosis. File uploads, timing, and Presage implementation are deferred. Presage feasibility must not block the loop.
+- A owns screens/CSS/browser voice; B owns educational generation/grading/instructions; C coordinates shared contracts, state, backend, persistence, dependencies, and tests.
+
+### Active R-series tracker
+
+- [ ] R1 — Pivot contracts and guide (C; A/B review). In progress. Acceptance: agreed stages, public/private boundary, grades and persistence; all consumers compile.
+- [ ] R2 — Provider proof/adapters (A ElevenLabs, B Gemini, C endpoints). Depends on R1. Acceptance: real connection, contextual voice, paired generation/grading and history retrieval; absent credentials recorded as blockers.
+- [ ] R3 — Resumable session foundation (C). Depends on R1. Acceptance: durable stages/drafts, pause/resume and preserved cycles.
+- [ ] R4 — Home and shared assessment UI (A/C). Depends on R1/R3. Acceptance: custom description, optional notes, real questions, skip/working and same assessment UI.
+- [ ] R5 — Blueprint and grading (B/C). Depends on R1/R2 Gemini proof. Acceptance: three validated pairs, fixed criteria, private keys, honest grades/errors.
+- [ ] R6 — Focused conversation (A/B/C). Depends on R2–R5. Acceptance: real gap context, interruptions, supportive guidance, reserved-question exclusion.
+- [ ] R7 — Reflection and repeat cycle (A/C, B review). Depends on R5/R6. Acceptance: actual comparison, optional self-report, new cycle, finish/save.
+- [ ] R8 — Verification/demo (all, C coordinates). Depends on full loop. Acceptance: meaningful tests, typecheck/lint/build, available UI checks and real audio verification; blockers recorded honestly.
+
+Current implementation session is authorized to complete R1–R8 code and checks. Do not claim live provider verification without credentials and actual successful calls. Update this tracker and README after checks. No automatic commit/push/deploy.
 
 Stack: React, Vite, TypeScript, React Router, plain feature-scoped CSS, and a small Node HTTP backend. Planned integrations: ElevenLabs for live conversation and Gemini for lesson interpretation, student reasoning through the selected conversation architecture, and evaluation.
 
@@ -88,7 +121,7 @@ npm run build
 
 Build includes frontend/backend/config/test typechecking. Node tests cover lifecycle and backend placeholders. UI tasks should also check the relevant route, keyboard behavior and responsive layout. Do not install a new test framework for a small presentation change.
 
-## Roadmap
+## Historical M-series roadmap (superseded by approved R-series)
 
 Statuses: **Not started**, **In progress**, **Blocked**, **Complete**. Estimates are person-hours; individual tasks generally target 15–60 minutes. Prior implementation is a foundation, not completion of future integration milestones.
 
@@ -211,7 +244,7 @@ After approved M1: A can refine UI and verify ElevenLabs; B can prototype Gemini
 
 Submission deadline: Sunday October 11, 2026 at noon; timezone unconfirmed. Aim for a working M8 loop Saturday evening and feature freeze Sunday morning. Cut M9 first if time is short.
 
-## Current project state
+## Historical pre-pivot project state
 
 - Latest completed approved task: **M2.1 — homepage heading/copy refinement**. Implementation stopped; awaiting approval for another task. M2 as a whole is blocked on the missing lesson contracts/state migration.
 - Recently completed foundation: three routes, curated topics, text fallback, draft protection, sample feedback isolation, retries, larger microphone and responsive UI. These are prior foundation features, not completion of M2–M8.

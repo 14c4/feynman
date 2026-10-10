@@ -1,56 +1,26 @@
 import { Link, Navigate, useNavigate, useParams } from 'react-router';
+import { useEffect, useRef } from 'react';
 import { Button } from '../../components/Button';
 import { EmptyState } from '../../components/EmptyState';
 import { useSessions } from '../../state/useSessions';
-import { getTopic } from '../topics/topics';
 import { TranscriptPanel } from '../study/TranscriptPanel';
-import { AttemptSummary } from './AttemptSummary';
-import { ConceptFeedbackList } from './ConceptFeedbackList';
-import { sampleFeedback, sampleTranscript } from './sampleFeedback';
 import '../study/study.css';
 import './feedback.css';
 
 export function ResultsPage() {
-  const { sessionId = '' } = useParams();
-  const { sessions, createSession } = useSessions();
-  const navigate = useNavigate();
-  const session = sessions[sessionId];
-  const topic = session ? getTopic(session.topicId) : undefined;
-
-  if (!session || !topic) return <EmptyState title="No reflection here yet." description="Complete a study session to see your saved explanation. Refreshing clears this visit’s sessions." />;
-  if (session.status === 'abandoned') return <EmptyState title="This session wasn’t completed." description="Choose a topic and save an explanation to complete a new attempt." />;
-  if (session.status !== 'completed') return <Navigate to={`/study/${sessionId}`} replace />;
-
-  const previous = Object.values(sessions).filter((item) => item.topicId === topic.id && item.status === 'completed' && item.attemptNumber < session.attemptNumber);
-  const exampleTopic = getTopic('recursion')!;
-  const learnerMessages = session.transcript.filter((message) => message.role === 'learner');
-
-  return (
-    <div className="results-page page-narrow">
-      <header className="results-heading"><span className="eyebrow">Pause. Reflect. Explain again.</span><h1 tabIndex={-1}>A little clearer, each time.</h1><p className="muted">{topic.title} <span aria-hidden="true">·</span> Attempt {session.attemptNumber} <span aria-hidden="true">·</span> Session complete</p></header>
-
-      <section className="session-recap" aria-labelledby="recap-heading">
-        <div className="section-heading"><h2 id="recap-heading">Your explanation</h2><span className="pill">{learnerMessages.length} saved {learnerMessages.length === 1 ? 'entry' : 'entries'}</span></div>
-        <p className="recap-explanation">{learnerMessages.at(-1)?.text}</p>
-        <TranscriptPanel messages={session.transcript} label="Your session transcript" />
-        <div className="integration-note"><span className="status-dot" aria-hidden="true" /><p><strong>Your session is complete.</strong> AI evaluation is awaiting integration. Your explanation has not been scored or assessed.</p></div>
-      </section>
-
-      <div className="results-actions"><Button onClick={() => {
-        const id = createSession(topic.id, session.id);
-        void navigate(`/study/${id}`);
-      }}>Retry {topic.title} <span aria-hidden="true">↻</span></Button><Link to="/" className="text-link">Choose another topic <span aria-hidden="true">→</span></Link></div>
-
-      <section className="feedback-example" aria-labelledby="example-heading">
-        <div className="example-banner"><span className="pill pill--warm">Illustrative example</span><p>Not an evaluation of your explanation.</p></div>
-        <header><span className="eyebrow">What future feedback could look like</span><h2 id="example-heading">Sample reflection: Recursion</h2><p className="muted">{sampleFeedback.summary}</p></header>
-        <div className="feedback-section"><h3><span className="feedback-marker feedback-marker--covered" aria-hidden="true">✓</span> Explained clearly</h3><ConceptFeedbackList coverage={sampleFeedback.conceptCoverage.filter((item) => item.status === 'covered')} topic={exampleTopic} transcript={sampleTranscript} /></div>
-        <div className="feedback-section"><h3><span className="feedback-marker" aria-hidden="true">↗</span> Room to clarify</h3><ConceptFeedbackList coverage={sampleFeedback.conceptCoverage.filter((item) => item.status !== 'covered')} topic={exampleTopic} transcript={sampleTranscript} /></div>
-        <section className="retry-suggestion"><span className="eyebrow">A more useful next attempt</span><h3>Make the stopping point explicit.</h3><ul>{sampleFeedback.recommendations.map((item) => <li key={item}>{item}</li>)}</ul><p>{sampleFeedback.suggestedRetry}</p></section>
-        <TranscriptPanel messages={sampleTranscript} label="Example transcript · separate sample data" />
-      </section>
-
-      <AttemptSummary current={session} previous={previous} />
-    </div>
-  );
+  const { sessionId = '' } = useParams(); const { sessions, busy, errors, loadSession, finishSession, setNervousness } = useSessions(); const navigate = useNavigate(); const session = sessions[sessionId]; const loadStarted = useRef(false);
+  useEffect(() => { if (!session && !loadStarted.current) { loadStarted.current = true; void loadSession(sessionId).catch(() => { loadStarted.current = false; }); } }, [session, sessionId, loadSession]);
+  if (!session) return <div className="page-narrow"><EmptyState title={busy[sessionId] ? 'Opening your reflection…' : 'Reflection unavailable'} description={errors[sessionId] ?? 'We could not load this saved session.'} /></div>;
+  if (session.stage !== 'results') return <Navigate to={`/study/${sessionId}`} replace />;
+  const baseline = session.attempts.find((attempt) => attempt.kind === 'baseline'); const finalAttempt = [...session.attempts].reverse().find((attempt) => attempt.kind === 'recheck' && attempt.grade); const firstCycle = session.cycles[0]; const latestCycle = session.cycles.find((cycle) => cycle.id === session.currentCycleId); const latestConversation = latestCycle?.conversations.flatMap((item) => item.messages) ?? [];
+  return <main className="results-page page-narrow"><header className="results-heading"><span className="eyebrow">A moment to reflect</span><h1 tabIndex={-1}>Here’s how you did.</h1><p className="muted">{session.title} <span aria-hidden="true">·</span> These scores reflect these questions, not mastery.</p></header>
+    <section className="score-comparison" aria-label="Assessment scores"><article><span className="eyebrow">First check</span><strong>{baseline?.grade ? `${baseline.grade.totalScore} / ${baseline.grade.maxScore}` : '—'}</strong><p>{baseline?.grade?.summary ?? 'No grade available'}</p></article><span className="score-arrow" aria-hidden="true">→</span><article className="score-current"><span className="eyebrow">Most recent recheck</span><strong>{finalAttempt?.grade ? `${finalAttempt.grade.totalScore} / ${finalAttempt.grade.maxScore}` : '—'}</strong><p>{finalAttempt?.grade?.summary ?? 'No grade available'}</p></article></section>
+    {finalAttempt?.grade && <section className="grade-section"><h2>Question feedback</h2><ol className="grade-list">{finalAttempt.grade.questionGrades.map((grade, index) => <li key={grade.questionId}><span className="grade-number">{index + 1}</span><div><div className="grade-title-row"><strong>{session.concepts.find((item) => item.id === grade.conceptId)?.title ?? 'Question'}</strong><span className="pill">{grade.score} / {grade.maxScore}</span></div><p>{grade.feedback}</p></div></li>)}</ol></section>}
+    <details className="reflection-details"><summary>Compare concepts across checks</summary><div className="concept-comparison">{session.concepts.map((concept) => { const before = baseline?.grade?.questionGrades.find((grade) => grade.conceptId === concept.id); const after = finalAttempt?.grade?.questionGrades.find((grade) => grade.conceptId === concept.id); return <div key={concept.id}><strong>{concept.title}</strong><span>{before ? `${before.score}/2` : '—'} <span aria-hidden="true">→</span> {after ? `${after.score}/2` : '—'}</span></div>; })}</div></details>
+    <details className="reflection-details"><summary>Review your answers</summary><div className="attempt-review">{session.attempts.map((attempt, attemptIndex) => <section key={attempt.id}><h3>{attempt.kind === 'baseline' ? 'First check' : `Recheck ${attemptIndex}`}</h3>{attempt.questions.map((question) => { const answer = attempt.answers.find((item) => item.questionId === question.id); const grade = attempt.grade?.questionGrades.find((item) => item.questionId === question.id); return <article key={question.id}><strong>{question.prompt}</strong><p>{answer?.skipped ? 'Skipped' : answer?.text || 'No answer saved'}{answer?.uncertain ? ' · Marked unsure' : ''}</p>{answer?.working && <p className="muted">Working: {answer.working}</p>}{grade && <p className="grade-feedback">{grade.score}/{grade.maxScore} · {grade.feedback}</p>}</article>; })}</section>)}</div></details>
+    {firstCycle && <details className="reflection-details"><summary>Conversation transcripts</summary>{session.cycles.map((cycle) => <section key={cycle.id}><h3>Practice round {cycle.number}</h3>{cycle.conversations.map((conversation, index) => <TranscriptPanel key={`${cycle.id}-${index}`} messages={conversation.messages} label={`Conversation ${index + 1} · ${conversation.transcriptStatus === 'ready' ? 'saved' : conversation.transcriptStatus}`} />)}</section>)}{latestConversation.length === 0 && <p className="muted">No conversation transcript was saved.</p>}</details>}
+    <section className="nervousness-reflection"><div><span className="eyebrow">Optional self-report</span><h2>How nervous do you feel now?</h2><p className="muted">1 = not at all · 5 = very. Before: {session.nervousnessBefore === undefined ? 'not recorded' : `${session.nervousnessBefore}/5`}. This is not a diagnosis.</p></div>{session.nervousnessAfter === undefined && session.lifecycle === 'active' ? <div className="rating-options">{([1,2,3,4,5] as const).map((value) => <button type="button" key={value} aria-label={`Nervousness ${value} out of 5`} onClick={() => void setNervousness(sessionId, 'after', value).catch(() => undefined)}>{value}</button>)}</div> : <p className="muted">After: {session.nervousnessAfter === undefined ? 'not recorded' : `${session.nervousnessAfter}/5`}</p>}</section>
+    {(errors[sessionId] || session.operationError) && <p className="form-error" role="alert">{errors[sessionId] || session.operationError}</p>}
+    <div className="results-actions"><Button disabled={busy[sessionId]} onClick={async () => { try { await finishSession(sessionId); await navigate('/'); } catch { /* state exposes operation error */ } }}>Finish session</Button><Link to="/" className="text-link">Start a new practice</Link></div>
+  </main>;
 }

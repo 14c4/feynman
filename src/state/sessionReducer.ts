@@ -1,63 +1,34 @@
-import type { EvaluationResult, EvaluationStatus, StudySession, TranscriptMessage } from '../../shared/types.js';
+import type { AssessmentAnswer, PracticeSession } from '../../shared/types.js';
 
 export interface SessionState {
-  sessions: Record<string, StudySession>;
-  evaluations: Record<string, EvaluationResult>;
-  evaluationStatus: Record<string, EvaluationStatus>;
+  sessions: Record<string, PracticeSession>;
+  busy: Record<string, boolean>;
+  errors: Record<string, string>;
 }
 
-export const initialSessionState: SessionState = {
-  sessions: {}, evaluations: {}, evaluationStatus: {},
-};
+export const initialSessionState: SessionState = { sessions: {}, busy: {}, errors: {} };
 
 export type SessionAction =
-  | { type: 'create'; session: StudySession }
-  | { type: 'start'; sessionId: string; at: string }
-  | { type: 'append'; message: TranscriptMessage }
-  | { type: 'finish'; sessionId: string; at: string }
-  | { type: 'leave'; keepSessionId?: string; at: string };
+  | { type: 'receive'; session: PracticeSession }
+  | { type: 'draft'; sessionId: string; attemptId: string; answer: AssessmentAnswer; index?: number }
+  | { type: 'busy'; sessionId: string; busy: boolean }
+  | { type: 'error'; sessionId: string; message: string };
 
 export function sessionReducer(state: SessionState, action: SessionAction): SessionState {
-  if (action.type === 'create') {
-    if (state.sessions[action.session.id]) return state;
-    return {
-      ...state,
-      sessions: { ...state.sessions, [action.session.id]: action.session },
-      evaluationStatus: { ...state.evaluationStatus, [action.session.id]: 'unavailable' },
-    };
-  }
-
-  if (action.type === 'leave') {
-    const sessions = { ...state.sessions };
-    let changed = false;
-    for (const session of Object.values(sessions)) {
-      if (session.id !== action.keepSessionId && ['preparing', 'active'].includes(session.status)) {
-        sessions[session.id] = { ...session, status: 'abandoned', endedAt: action.at };
-        changed = true;
-      }
-    }
-    return changed ? { ...state, sessions } : state;
-  }
-
-  const id = action.type === 'append' ? action.message.sessionId : action.sessionId;
-  const session = state.sessions[id];
-  if (!session) return state;
-
-  let updated: StudySession;
-  switch (action.type) {
-    case 'start':
-      if (session.status !== 'preparing') return state;
-      updated = { ...session, status: 'active', startedAt: action.at };
-      break;
-    case 'append':
-      if (session.status !== 'active' || !action.message.text.trim() ||
-        session.transcript.some((message) => message.id === action.message.id)) return state;
-      updated = { ...session, transcript: [...session.transcript, { ...action.message, text: action.message.text.trim() }] };
-      break;
-    case 'finish':
-      if (session.status !== 'active' || !session.transcript.some((message) => message.role === 'learner')) return state;
-      updated = { ...session, status: 'completed', endedAt: action.at };
-      break;
-  }
-  return { ...state, sessions: { ...state.sessions, [id]: updated } };
+  if (action.type === 'receive') return { ...state, sessions: { ...state.sessions, [action.session.id]: action.session } };
+  if (action.type === 'busy') return { ...state, busy: { ...state.busy, [action.sessionId]: action.busy } };
+  if (action.type === 'error') return { ...state, errors: { ...state.errors, [action.sessionId]: action.message } };
+  const session = state.sessions[action.sessionId];
+  const attempt = session?.attempts.find((item) => item.id === action.attemptId);
+  if (!session || !attempt || session.lifecycle !== 'active' || session.stage !== attempt.kind || attempt.submittedAt ||
+    !attempt.questions.some((question) => question.id === action.answer.questionId) ||
+    (action.index !== undefined && (!Number.isInteger(action.index) || action.index < 0 || action.index >= attempt.questions.length))) return state;
+  const updated = {
+    ...attempt,
+    answers: attempt.answers.map((answer) => answer.questionId === action.answer.questionId ? action.answer : answer),
+    currentQuestionIndex: action.index ?? attempt.currentQuestionIndex,
+  };
+  return { ...state, sessions: { ...state.sessions, [session.id]: {
+    ...session, updatedAt: new Date().toISOString(), attempts: session.attempts.map((item) => item.id === updated.id ? updated : item),
+  } } };
 }

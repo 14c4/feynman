@@ -1,47 +1,31 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { StudySession, TranscriptMessage } from '../shared/types.js';
+import type { PracticeSession } from '../shared/types.js';
 import { initialSessionState, sessionReducer } from '../src/state/sessionReducer.js';
 
-const at = '2026-01-01T12:00:00Z';
-const session: StudySession = { id: 'one', topicId: 'recursion', attemptNumber: 1, status: 'preparing', createdAt: at, transcript: [] };
-const message: TranscriptMessage = { id: 'message-one', sessionId: 'one', role: 'learner', text: '  A function calls itself.  ', createdAt: at, source: 'text' };
+const session: PracticeSession = {
+  id: 'one', title: 'Recursion', description: 'Recursive functions', notes: '', scope: 'Base cases', concepts: [], blueprintVersion: 1,
+  stage: 'baseline', lifecycle: 'active', preparation: { status: 'ready' }, cycles: [], currentCycleId: 'cycle',
+  createdAt: '2026-01-01', updatedAt: '2026-01-01', attempts: [{
+    id: 'baseline', kind: 'baseline', cycleId: 'cycle', blueprintVersion: 1, currentQuestionIndex: 0,
+    questions: [{ id: 'q1', conceptId: 'base-case', prompt: 'Why stop?', supportsWorking: true }],
+    answers: [{ questionId: 'q1', text: '', working: '', skipped: false, uncertain: false }],
+  }],
+};
 
-test('requires preparation and a saved explanation before completion; completed transcripts are immutable', () => {
-  let state = sessionReducer(initialSessionState, { type: 'create', session });
-  assert.equal(state.evaluationStatus.one, 'unavailable');
-  assert.equal(sessionReducer(state, { type: 'append', message }), state);
-  assert.equal(sessionReducer(state, { type: 'finish', sessionId: 'one', at }), state);
-  state = sessionReducer(state, { type: 'start', sessionId: 'one', at });
-  assert.equal(state.sessions.one.startedAt, at);
-  assert.equal(sessionReducer(state, { type: 'finish', sessionId: 'one', at }), state);
-  assert.equal(sessionReducer(state, { type: 'append', message: { ...message, text: ' ' } }), state);
-  state = sessionReducer(state, { type: 'append', message });
-  assert.equal(state.sessions.one.transcript[0].text, 'A function calls itself.');
-  assert.equal(sessionReducer(state, { type: 'append', message }), state);
-  state = sessionReducer(state, { type: 'finish', sessionId: 'one', at });
-  assert.equal(state.sessions.one.status, 'completed');
-  assert.equal(state.sessions.one.endedAt, at);
-  assert.equal(sessionReducer(state, { type: 'append', message: { ...message, id: 'later' } }), state);
-  assert.equal(sessionReducer(state, { type: 'start', sessionId: 'one', at }), state);
-  assert.deepEqual(state.evaluations, {});
+test('draft answers update the one session without losing working or uncertainty', () => {
+  const state = sessionReducer(initialSessionState, { type: 'receive', session });
+  const answer = { questionId: 'q1', text: 'A base case stops further calls.', working: 'n reaches zero', skipped: false, uncertain: true };
+  const next = sessionReducer(state, { type: 'draft', sessionId: 'one', attemptId: 'baseline', answer });
+  assert.deepEqual(next.sessions.one.attempts[0].answers[0], answer);
+  assert.equal(state.sessions.one.attempts[0].answers[0].text, '');
 });
 
-test('navigation abandons only unfinished sessions and preserves saved text and retry links', () => {
-  let state = sessionReducer(initialSessionState, { type: 'create', session });
-  state = sessionReducer(state, { type: 'start', sessionId: 'one', at });
-  state = sessionReducer(state, { type: 'append', message });
-  state = sessionReducer(state, { type: 'finish', sessionId: 'one', at });
-  state = sessionReducer(state, { type: 'create', session: { ...session, id: 'two', previousSessionId: 'one', attemptNumber: 2 } });
-  state = sessionReducer(state, { type: 'leave', keepSessionId: 'two', at });
-  assert.equal(state.sessions.one.status, 'completed');
-  assert.equal(state.sessions.two.status, 'preparing');
-  assert.equal(state.sessions.two.previousSessionId, 'one');
-  state = sessionReducer(state, { type: 'start', sessionId: 'two', at });
-  state = sessionReducer(state, { type: 'append', message: { ...message, id: 'message-two', sessionId: 'two' } });
-  state = sessionReducer(state, { type: 'leave', at });
-  assert.equal(state.sessions.two.status, 'abandoned');
-  assert.equal(state.sessions.two.transcript.length, 1);
-  assert.equal(state.sessions.one.status, 'completed');
-  assert.equal(sessionReducer(state, { type: 'leave', at }), state);
+test('paused and submitted assessments cannot be edited locally', () => {
+  const answer = { questionId: 'q1', text: 'changed', working: '', skipped: false, uncertain: false };
+  for (const frozen of [{ ...session, lifecycle: 'paused' as const }, { ...session, stage: 'baseline_evaluating' as const },
+    { ...session, attempts: [{ ...session.attempts[0], submittedAt: '2026-01-01' }] }]) {
+    const state = sessionReducer(initialSessionState, { type: 'receive', session: frozen });
+    assert.equal(sessionReducer(state, { type: 'draft', sessionId: 'one', attemptId: 'baseline', answer }), state);
+  }
 });
