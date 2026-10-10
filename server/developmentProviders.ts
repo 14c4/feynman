@@ -34,6 +34,10 @@ export function createDevelopmentProviders(env: NodeJS.ProcessEnv): Providers {
       if (scenario === 'clarification' && !clarification?.trim() && !keepOriginal) return { kind: 'clarification', question: 'DEV MOCK: which arithmetic skill would you like to practise?', suggestion: 'DEV MOCK: practise multi-digit multiplication and long division.' };
       return { kind: 'ready', title: 'Development arithmetic fixture', scope: 'DEV MOCK: fixed addition, multiplication and division fixtures. Submitted topic, notes and uploaded files are not interpreted.', concepts: structuredClone(concepts) };
     },
+    async transcribeImage({ name }) {
+      await wait();
+      return `DEV MOCK image transcription of ${name}: addition combines two quantities, multiplication combines equal groups, and division shares a quantity into equal groups. This is fixed test text, not a Gemini reading of the image.`;
+    },
     async grade({ text, working, expectedAnswer }) {
       await wait();
       if (scenario === 'grade-error-once' && !gradingFailed) { gradingFailed = true; throw new PracticeError('DEV MOCK: simulated grading failure. Your answers are saved; retry to recover.', 429, 'MOCK_GRADING_ERROR'); }

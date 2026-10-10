@@ -7,6 +7,17 @@ import { PracticeError } from './domain.js';
 // to providers, always as data rather than instructions.
 export interface PrivateMaterial { id: string; name: string; text: string }
 export interface ExtractedMaterial { meta: StudyMaterial; text: string }
+/** Turns one image into study text (text, equations, labelled diagrams). Returns '' when it holds no study content. */
+export type ImageTranscriber = (image: { name: string; mimeType: string; data: string }) => Promise<string>;
+
+const IMAGE_TYPES: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
+/** The file's real type from its first bytes, so a renamed file is not sent on as an image. */
+function sniffImage(bytes: Buffer): string | undefined {
+  if (bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (bytes.subarray(0, 4).toString('latin1') === 'RIFF' && bytes.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
+  return undefined;
+}
 
 /** Characters kept per file after extraction. */
 export const STORED_CHARACTERS = 60_000;
@@ -51,12 +62,13 @@ function plainText(bytes: Buffer, name: string): string {
   catch { throw fail(`“${name}” is not readable UTF-8 text. Save it as UTF-8 and try again.`); }
 }
 
-export async function extractMaterials(value: unknown): Promise<ExtractedMaterial[]> {
+export async function extractMaterials(value: unknown, transcribe?: ImageTranscriber): Promise<ExtractedMaterial[]> {
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw fail('Uploaded materials must be a list of files.');
   if (value.length > MATERIAL_LIMITS.files) throw fail(`Upload at most ${MATERIAL_LIMITS.files} files.`);
   let total = 0;
   const results: ExtractedMaterial[] = [];
+  const transcriptions: Promise<void>[] = [];
   for (const item of value) {
     const row = item && typeof item === 'object' ? item as Record<string, unknown> : {};
     const name = safeName(row.name);
@@ -68,13 +80,27 @@ export async function extractMaterials(value: unknown): Promise<ExtractedMateria
     if (total > MATERIAL_LIMITS.totalBytes) throw fail(`Uploaded files together must be under ${MATERIAL_LIMITS.totalBytes / 1024 / 1024} MB.`);
     const extension = name.toLowerCase().match(/\.[a-z]+$/)?.[0] ?? '';
     const isPdf = bytes.subarray(0, 5).toString('latin1') === '%PDF-';
+    if (extension in IMAGE_TYPES) {
+      const mimeType = sniffImage(bytes);
+      if (!mimeType) throw fail(`“${name}” is not a valid PNG, JPEG or WebP image.`);
+      if (!transcribe) throw fail('Reading images isn’t available on this server. Upload a PDF, TXT or Markdown file instead.');
+      const entry: ExtractedMaterial = { meta: { id: randomUUID(), name, kind: 'image', characters: 0, truncated: false }, text: '' };
+      results.push(entry);
+      // Images are transcribed in parallel; a session is only created once every one has been read.
+      transcriptions.push(transcribe({ name, mimeType, data: row.data }).then((raw) => {
+        const text = normalizeText(raw);
+        if (text.replace(/\s/g, '').length < MINIMUM_READABLE) throw fail(`We couldn’t find readable study content in “${name}”. Try a clearer, closer photo, or add a short description.`);
+        entry.text = text.slice(0, STORED_CHARACTERS); entry.meta.characters = entry.text.length; entry.meta.truncated = text.length > STORED_CHARACTERS;
+      }));
+      continue;
+    }
     let kind: StudyMaterial['kind']; let raw: string; let pages: number | undefined;
     if (extension === '.pdf' || isPdf) {
       if (!isPdf) throw fail(`“${name}” is not a valid PDF file.`);
       ({ text: raw, pages } = await pdfText(bytes, name)); kind = 'pdf';
     } else if (extension === '.txt' || extension === '.md' || extension === '.markdown') {
       raw = plainText(bytes, name); kind = extension === '.txt' ? 'text' : 'markdown';
-    } else throw fail(`“${name}” is not supported. Upload a PDF, TXT, or Markdown (.md) file.`);
+    } else throw fail(`“${name}” is not supported. Upload an image, PDF, TXT, or Markdown (.md) file.`);
     const text = normalizeText(raw);
     if (text.replace(/\s/g, '').length < MINIMUM_READABLE) {
       throw fail(kind === 'pdf'
@@ -85,6 +111,7 @@ export async function extractMaterials(value: unknown): Promise<ExtractedMateria
     const stored = truncated ? text.slice(0, STORED_CHARACTERS) : text;
     results.push({ meta: { id: randomUUID(), name, kind, characters: stored.length, pages, truncated }, text: stored });
   }
+  await Promise.all(transcriptions);
   return results;
 }
 

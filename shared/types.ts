@@ -93,7 +93,7 @@ export interface PracticeConcept {
 export interface StudyMaterial {
   id: string;
   name: string;
-  kind: 'pdf' | 'text' | 'markdown';
+  kind: 'pdf' | 'text' | 'markdown' | 'image';
   characters: number;
   pages?: number;
   truncated: boolean;
@@ -317,7 +317,8 @@ export interface SessionAccess {
 
 export interface CreatePracticeInput {
   topic?: string;
-  description: string;
+  /** Optional when study material or notes are provided. */
+  description?: string;
   notes?: string;
   materials?: MaterialUpload[];
 }
@@ -381,7 +382,9 @@ export const MATERIAL_LIMITS = {
   files: 3,
   fileBytes: 4 * 1024 * 1024,
   totalBytes: 8 * 1024 * 1024,
-  extensions: ['.pdf', '.txt', '.md', '.markdown'],
+  extensions: ['.pdf', '.txt', '.md', '.markdown', '.png', '.jpg', '.jpeg', '.webp'],
+  /** Photos and screenshots; their text and diagrams are transcribed on the server. */
+  imageExtensions: ['.png', '.jpg', '.jpeg', '.webp'],
 } as const;
 
 export const PRACTICE_LIMITS = {

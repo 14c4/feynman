@@ -16,8 +16,8 @@ const SOURCE = 'Photosynthesis converts light energy into chemical energy stored
 
 // Real-mode-shaped providers injected locally: no Gemini or ElevenLabs request is made.
 function fakeProviders() {
-  const calls = { generate: [] as { description: string; material?: string }[], alex: [] as { context: AlexContext; messages: TranscriptMessage[] }[], history: 0 };
-  let failNextReply = false; let historyStatus = 'processing'; let historySession = '';
+  const calls = { transcribe: [] as { name: string; mimeType: string }[], generate: [] as { description: string; material?: string }[], alex: [] as { context: AlexContext; messages: TranscriptMessage[] }[], history: 0 };
+  let blankImages = false; let failNextReply = false; let historyStatus = 'processing'; let historySession = '';
   const providers: Providers = {
     mode: 'real',
     async generate(description, _notes, _clarification, material) {
@@ -26,6 +26,10 @@ function fakeProviders() {
         id, title: `Concept ${id}`, description: `What ${id} covers`, rubric: '0 none, 1 partial, 2 complete', supportsWorking: false,
         baselinePrompt: `Baseline about ${id}?`, baselineExpectedAnswer: `${id} answer`, recheckPrompt: `Different follow-up about ${id}?`, recheckExpectedAnswer: `${id} follow-up answer`,
       })) };
+    },
+    async transcribeImage({ name, mimeType }) {
+      calls.transcribe.push({ name, mimeType });
+      return blankImages ? '' : 'Photosynthesis: chlorophyll absorbs light, water is split, and glucose is built from carbon dioxide.';
     },
     async grade({ text, expectedAnswer }) { return text === expectedAnswer ? { score: 2, feedback: 'Complete.', evidence: text } : { score: 0, feedback: 'Revisit this idea.', evidence: '' }; },
     async voice(sessionId, title, context, opening): Promise<VoiceCredentials> { return { signedUrl: 'wss://voice.invalid', dynamicVariables: { session_id: sessionId, session_title: title, focus_context: context, opening_question: opening } }; },
@@ -40,7 +44,7 @@ function fakeProviders() {
       return `Reply ${messages.filter((message) => message.role === 'learner').length}: can you give an example?`;
     },
   };
-  return { providers, calls, failReply: () => { failNextReply = true; }, setHistory: (status: string, session: string) => { historyStatus = status; historySession = session; } };
+  return { providers, calls, blankImages: () => { blankImages = true; }, failReply: () => { failNextReply = true; }, setHistory: (status: string, session: string) => { historyStatus = status; historySession = session; } };
 }
 
 async function harness(context: TestContext, providers: Providers, env: NodeJS.ProcessEnv = { ELEVENLABS_AGENT_ID: 'agent-test' }) {
@@ -100,10 +104,38 @@ test('uploads: TXT, Markdown and text PDFs are extracted on the server and kept 
   assert.match(fake.calls.generate[0].description, /^Topic: Cell energy\nWhat I want to learn: Respiration basics$/);
 });
 
+const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 1)]);
+
+test('an image upload alone is enough to start: the photo is read into private study text and no description is needed', async (context) => {
+  const fake = fakeProviders();
+  const api = await harness(context, fake.providers);
+  const created = await api.create({ materials: [{ name: 'chapter-3-notes.png', data: b64(PNG) }] });
+  assert.equal(created.session.title, 'chapter-3-notes');
+  assert.equal(created.session.description, '');
+  assert.equal(created.session.materials?.[0].kind, 'image');
+  assert.deepEqual(fake.calls.transcribe, [{ name: 'chapter-3-notes.png', mimeType: 'image/png' }]);
+  assert.equal(JSON.stringify(created.session).includes('chlorophyll absorbs'), false, 'The transcription stays on the server');
+  const prepared = await api.call(`/sessions/${created.session.id}/prepare`);
+  assert.equal(prepared.stage, 'baseline');
+  assert.match(fake.calls.generate[0].material ?? '', /File: chapter-3-notes\.png[\s\S]*chlorophyll absorbs light/);
+  assert.ok(fake.calls.generate[0].description.length > 0, 'The model is still given an instruction');
+});
+
+test('images with no readable study content, or no input at all, are rejected without creating a session', async (context) => {
+  const fake = fakeProviders();
+  fake.blankImages();
+  const api = await harness(context, fake.providers);
+  const blank = await api.create({ materials: [{ name: 'blank.png', data: b64(PNG) }] }, 422);
+  assert.match(blank.error.message, /couldn’t find readable study content/);
+  const nothing = await api.create({ description: '  ' }, 400);
+  assert.match(nothing.error.message, /Upload study material or describe/);
+});
+
 test('uploads: unsupported, empty, image-only, corrupt and oversized files are rejected without creating a session', async (context) => {
   const api = await harness(context, fakeProviders().providers);
   const cases: [unknown, RegExp][] = [
-    [[{ name: 'photo.png', data: b64('not really an image but unsupported anyway') }], /not supported/],
+    [[{ name: 'photo.gif', data: b64('unsupported image type') }], /not supported/],
+    [[{ name: 'photo.png', data: b64('renamed text, not a real image') }], /not a valid PNG/],
     [[{ name: 'blank.txt', data: '' }], /empty/],
     [[{ name: 'short.md', data: b64('# Hi') }], /enough readable text/],
     [[{ name: 'scan.pdf', data: b64(buildPdf()) }], /no selectable text/],

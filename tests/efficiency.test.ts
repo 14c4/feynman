@@ -199,3 +199,18 @@ test('voice transcript checks are throttled and deduplicated per conversation', 
   const metrics = await api.call<Record<string, Any>>('/metrics', 'GET');
   assert.ok(metrics.operations['elevenlabs:conversation_history'].avoided >= 3);
 });
+
+test('reading an uploaded image is one Gemini request that carries the image inline and returns plain study text', async (context) => {
+  const text = 'Mitochondria produce ATP. Diagram: a bean-shaped organelle labelled inner membrane and matrix.';
+  const api = await harness(context, { respond: () => ok({ studyContent: true, text }, 100) });
+  const read = await api.providers.transcribeImage!({ name: 'cell.png', mimeType: 'image/png', data: 'AAAA' });
+  assert.equal(read, text);
+  assert.equal(api.gemini.length, 1);
+  const parts = api.gemini[0]!.body.contents[0].parts as Any[];
+  assert.deepEqual(parts[1], { inlineData: { mimeType: 'image/png', data: 'AAAA' } });
+});
+
+test('an image with no study content reads as empty text rather than invented content', async (context) => {
+  const blank = await harness(context, { respond: () => ok({ studyContent: false, text: '' }, 100) });
+  assert.equal(await blank.providers.transcribeImage!({ name: 'blank.png', mimeType: 'image/png', data: 'AAAA' }), '');
+});

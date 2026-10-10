@@ -392,7 +392,7 @@ function StudyContent({ sessionId }: { sessionId: string }) {
   </>;
   return <div className={`study study--${session.stage}`}>
     <header className="study-head">
-      <div><span className="eyebrow">{heading.eyebrow}</span><h1 tabIndex={-1}>{showOverview ? 'Here’s what we’ll practise' : heading.title(session)}</h1>{session.stage !== 'teaching' && !showOverview && <p className="muted">{session.stage === 'preparing' ? session.description : session.title}</p>}</div>
+      <div><span className="eyebrow">{heading.eyebrow}</span><h1 tabIndex={-1}>{showOverview ? 'Here’s what we’ll practise' : heading.title(session)}</h1>{session.stage !== 'teaching' && !showOverview && <p className="muted">{session.stage === 'preparing' ? session.description || 'Reading your study material' : session.title}</p>}</div>
       {session.stage !== 'teaching' && <Button variant="secondary" size="sm" onClick={() => void exit()} disabled={busy[sessionId]}>Save &amp; exit</Button>}
     </header>
     {session.lifecycle === 'paused' ? <StatusCard title="Your session is paused" icon="pause"><p className="muted">Everything you’ve written is saved. Pick up right where you left off.</p><Button disabled={busy[sessionId]} onClick={() => void resumeSession(sessionId).catch(() => undefined)}>Continue session<PracticeIcon name="arrow" size={16} /></Button></StatusCard> :
