@@ -23,6 +23,8 @@ export interface SessionContextValue extends SessionState {
   finishSession: (id: string) => Promise<void>;
   setNervousness: (id: string, when: 'before' | 'after', value: NervousnessValue | null) => Promise<void>;
   requestVoice: (id: string) => Promise<VoiceCredentials>;
+  /** Creates the personal review sheet. Runs outside the session queue so results stay usable meanwhile; errors are thrown to the caller. */
+  generateReview: (id: string, regenerate?: boolean) => Promise<void>;
   registerConversation: (id: string, conversationId: string) => Promise<void>;
   finalizeConversation: (id: string, conversationId: string) => Promise<void>;
   /** Deletes sessions from this browser and, when reachable, from the server. */

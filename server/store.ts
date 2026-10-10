@@ -13,6 +13,8 @@ export interface StoredRecord {
   topic?: string;
   /** Validated grades for an assessment whose grading has not finished; reused on retry. Server-only. */
   gradeCache?: Record<string, QuestionGrade>;
+  /** Fingerprint of the evidence the stored review sheet was generated from. Server-only. */
+  reviewHash?: string;
 }
 export interface SessionStore {
   get(id: string): Promise<StoredRecord | undefined>;

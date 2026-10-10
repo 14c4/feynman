@@ -281,6 +281,20 @@ export interface PreparationState {
   suggestedPrompt?: string;
 }
 
+/**
+ * How a concept's understanding moved across the session. Decided from the 0–2 grades
+ * (skipped answers count as no evidence); never from confidence or physiology.
+ */
+export type ReviewStatus = 'persistent_gap' | 'improved_incomplete' | 'resolved_gap' | 'new_gap' | 'unrechecked_gap' | 'strength' | 'insufficient';
+
+/** The personalized review sheet, generated once at results. `markdown` is the canonical content for display, .md and PDF. */
+export interface ReviewSheet {
+  markdown: string;
+  source: 'gemini' | 'mock';
+  generatedAt: string;
+  concepts: { conceptId: string; status: ReviewStatus }[];
+}
+
 export interface PracticeSession {
   id: string;
   /** Server-selected source. Optional for older browser snapshots. */
@@ -305,6 +319,8 @@ export interface PracticeSession {
   events?: SessionEvent[];
   /** Optional camera monitoring windows. Absent when monitoring was never used. */
   monitoring?: MonitoringWindow[];
+  /** Present once the review sheet has been generated at results. */
+  review?: ReviewSheet;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;

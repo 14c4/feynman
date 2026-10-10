@@ -169,6 +169,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return status;
   }, [receive, tokenFor]);
   const sendTextMessage = useCallback((id: string, conversationId: string, text?: string) => run(id, async () => receive(await practiceApi.sendTextMessage(id, tokenFor(id), conversationId, text))), [receive, run, tokenFor]);
+  // Bypasses the session queue: generating the review sheet must not block the after-rating or Finish.
+  const generateReview = useCallback(async (id: string, regenerate = false) => {
+    try { receive(await practiceApi.review(id, tokenFor(id), regenerate)); }
+    catch (error) { if (error instanceof PracticeApiError && error.session) receive(error.session); throw error; }
+  }, [receive, tokenFor]);
 
   useEffect(() => {
     let active = true;
@@ -198,5 +203,5 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [persist]);
   return <SessionContext.Provider value={{ ...state, storageError, providerMode, integration, draftStatus, saveDraft, createSession, loadSession, prepareSession, updateDraft,
     submitAssessment, saveAndExit, resumeSession, startRecheck, returnToTeaching, practiceAgain, finishSession, setNervousness,
-    requestVoice, registerConversation, finalizeConversation, removeSessions, startTextConversation, sendTextMessage, startAttempt, startMonitoring, sendFrames, stopMonitoring }}>{children}</SessionContext.Provider>;
+    requestVoice, generateReview, registerConversation, finalizeConversation, removeSessions, startTextConversation, sendTextMessage, startAttempt, startMonitoring, sendFrames, stopMonitoring }}>{children}</SessionContext.Provider>;
 }

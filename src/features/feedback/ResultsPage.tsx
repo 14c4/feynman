@@ -9,6 +9,8 @@ import type { AssessmentGrade, QuestionGrade } from '../../../shared/types';
 import { CONFIDENCE_LABELS } from '../../../shared/insights';
 import { ReadinessInsights } from '../insights/ReadinessInsights';
 import { PresagePanel } from '../insights/PresagePanel';
+import { MonitorPrompt } from '../insights/MonitorDock';
+import { ReviewSheetPanel } from './ReviewSheet';
 import '../study/study.css';
 import './feedback.css';
 
@@ -54,7 +56,6 @@ export function ResultsPage() {
     <header className="results-head enter">
       <span className="eyebrow"><PracticeIcon name="leaf" size={14} />{session.title}</span>
       <h1 tabIndex={-1}>Here’s what changed.</h1>
-      <p className="muted">These scores reflect these six questions, not overall mastery.</p>
     </header>
 
     {mock && <div className="notice notice--warning" role="status"><PracticeIcon name="info" size={16} /><p>DEV MOCK: these are deterministic test grades from the development fixture, not Gemini evaluation. {conversations.length ? 'Alex’s text replies were scripted test messages.' : 'Teaching was skipped with a test-only bypass; no conversation took place.'}</p></div>}
@@ -83,7 +84,7 @@ export function ResultsPage() {
       <div><span className="eyebrow">What to do next</span>
         <h3 id="next-heading">{weaker.length ? `Explain ${weakTitles.length === 1 ? weakTitles[0] : 'these ideas'} again in a fresh session` : 'Try teaching Alex a new topic'}</h3>
         <p className="muted small">{weaker.length ? 'Read the feedback above, revisit your notes on the gaps, then teach it again with new questions.' : 'Explaining something new is the best way to keep the habit going.'}</p></div>
-      {weaker.length ? <Button variant="secondary" onClick={practiseAgain}>Practise again<PracticeIcon name="arrow" size={16} /></Button> : <Link className="button button--secondary" to="/">New session<PracticeIcon name="arrow" size={16} /></Link>}
+      {weaker.length ? <Button variant="secondary" onClick={practiseAgain}>Practice again<PracticeIcon name="arrow" size={16} /></Button> : <Link className="button button--secondary" to="/">New session<PracticeIcon name="arrow" size={16} /></Link>}
     </section>
 
     <div className="results-details">
@@ -98,6 +99,8 @@ export function ResultsPage() {
       <details className="disclosure" open={pending}><summary>Conversations with Alex<span className="summary-meta">{conversations.length} {conversations.length === 1 ? 'conversation' : 'conversations'}</span><PracticeIcon name="chevron" size={14} /></summary>
         <div className="disclosure-body">{conversations.length ? <ConversationList session={session} /> : <p className="muted small">No conversation took place in this session.</p>}</div></details>
     </div>
+
+    <ReviewSheetPanel key={session.id} session={session} />
 
     <section className="reflection card" aria-labelledby="reflection-heading">
       <div><span className="eyebrow">Optional self-report · not a diagnosis</span><h3 id="reflection-heading">How nervous do you feel now?</h3>

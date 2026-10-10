@@ -6,6 +6,8 @@ export interface PracticeService {
   update(id: string, token: string, input: UpdatePracticeInput): Promise<PracticeSession>;
   action(id: string, token: string, action: 'prepare' | 'submit' | 'pause' | 'resume' | 'recheck' | 'teach' | 'cycles' | 'finish', input?: Record<string, string | boolean>): Promise<PracticeSession>;
   voice(id: string, token: string): Promise<VoiceCredentials>;
+  /** Creates (or with `regenerate`, recreates) the personal review sheet at results. */
+  review(id: string, token: string, regenerate?: boolean): Promise<PracticeSession>;
   registerConversation(id: string, token: string, conversationId: string): Promise<PracticeSession>;
   finalizeConversation(id: string, token: string, conversationId: string): Promise<PracticeSession>;
   remove(id: string, token: string): Promise<{ deleted: true }>;

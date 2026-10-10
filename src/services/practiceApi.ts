@@ -31,6 +31,7 @@ export const practiceApi: PracticeService = {
   update: (id, token, input) => request<PracticeSession>(path(id), 'PATCH', token, input),
   action: (id, token, action, input = {}) => request<PracticeSession>(`${path(id)}/${action}`, 'POST', token, input),
   voice: (id, token) => request<VoiceCredentials>(`${path(id)}/voice`, 'POST', token, {}),
+  review: (id, token, regenerate) => request<PracticeSession>(`${path(id)}/review`, 'POST', token, regenerate ? { regenerate: true } : {}),
   registerConversation: (id, token, conversationId) => request<PracticeSession>(`${path(id)}/conversations`, 'POST', token, { conversationId }),
   finalizeConversation: (id, token, conversationId) => request<PracticeSession>(`${path(id)}/conversations/${encodeURIComponent(conversationId)}/finalize`, 'POST', token, {}),
   remove: (id, token) => request<{ deleted: true }>(path(id), 'DELETE', token),

@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { AssessmentAnswer, AssessmentAttempt, ConversationSegment, PracticeCycle, PracticeQuestion, PracticeSession, QuestionGrade, SessionEvent, TranscriptMessage, UpdatePracticeInput, NervousnessValue, IntegrationHealth } from '../shared/types.js';
+import type { AssessmentAnswer, AssessmentAttempt, ConversationSegment, PracticeCycle, PracticeQuestion, PracticeSession, QuestionGrade, ReviewSheet, SessionEvent, TranscriptMessage, UpdatePracticeInput, NervousnessValue, IntegrationHealth } from '../shared/types.js';
 import { MONITORING_LIMITS, PRACTICE_LIMITS } from '../shared/types.js';
 import { makeQuestions, PracticeError, publicQuestion, totalGrades, validateGrade, type PrivateBlueprint } from './domain.js';
 import { createProviders, ProviderError, type GradeItem, type Providers } from './providers.js';
@@ -10,6 +10,7 @@ import { EXCERPT_CHARACTERS, extractMaterials, materialExcerpt } from './materia
 import { alexContext, openingQuestion, voiceFocusContext } from './alex.js';
 import { MonitoringService } from './physiology.js';
 import { bucketFor, clientAddress, positiveInteger, RateLimiter, rateLimitEnabled } from './protection.js';
+import { buildReviewSheet, reviewFingerprint, reviewInput } from './review.js';
 
 interface HandlerOptions { store?: SessionStore; providers?: Providers; env?: NodeJS.ProcessEnv; monitoring?: MonitoringService; /** Minimum gap between ElevenLabs transcript checks per conversation. */ transcriptIntervalMs?: number; /** Per-client limits; defaults to on in production (see protection.ts). Pass null to disable. */ limiter?: RateLimiter | null }
 const now = () => new Date().toISOString();
@@ -235,6 +236,22 @@ export function createPracticeHandler(options: HandlerOptions = {}) {
       }
       if (req.method === 'POST' && suffix === '/cycles') throw new PracticeError('Additional cycles are deferred for this demo. Start a new practice from Home.', 501, 'DEFERRED');
       if (req.method === 'POST' && suffix === '/finish') { if (session.stage !== 'results') throw new Error('Finish is available after results.'); session.lifecycle = 'completed'; session.completedAt = now(); logEvent(session, 'session_finished', {}, session.completedAt); await save(); json(res, 200, view(record)); return; }
+      if (req.method === 'POST' && suffix === '/review') {
+        // Generated from this session's stored evidence and saved with it. A stored sheet is reused until that
+        // evidence changes (e.g. a voice transcript saved after results) or the learner asks for a new version.
+        if (session.stage !== 'results') throw new PracticeError('Your review sheet is available with your results.', 409, 'INVALID_STAGE');
+        const input = reviewInput(record); const fingerprint = reviewFingerprint(input);
+        if (session.review && record.reviewHash === fingerprint && body.regenerate !== true) { json(res, 200, view(record)); return; }
+        if (!providers.reviewSheet) throw new PracticeError('Review sheets are not available with this provider.', 503, 'NOT_CONFIGURED');
+        let sheet = undefined as ReviewSheet | undefined;
+        await once(`review:${session.id}`, async () => { sheet = buildReviewSheet(input, await providers.reviewSheet!(input), providers.mode === 'mock' ? 'mock' : 'gemini'); });
+        // Re-read so a concurrent update (e.g. the after-rating) is not overwritten by this slower request.
+        const latest = await fresh(session.id); responseRecord = latest;
+        if (sheet) { latest.session.review = sheet; latest.reviewHash = fingerprint; latest.session.updatedAt = now(); await store.set(latest); }
+        // A duplicate request that waited on a failed generation must not report an outdated sheet as current.
+        if (!latest.session.review || latest.reviewHash !== fingerprint) throw new PracticeError('Your review sheet could not be created. Your results are saved; please retry.', 502, 'REVIEW_FAILED');
+        json(res, 200, view(latest)); return;
+      }
       if (req.method === 'POST' && suffix === '/voice') {
         if (session.stage !== 'teaching' || session.lifecycle !== 'active') throw new Error('Voice is available during active teaching.');
         json(res, 200, await providers.voice(session.id, session.title, voiceFocusContext(record), openingQuestion(session))); return;

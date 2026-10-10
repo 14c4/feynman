@@ -29,7 +29,7 @@ export function bucketFor(method: string | undefined, path: string): RateBucket 
   if (path === '/api/sessions') return 'create';
   if (/\/monitoring\/[0-9a-f-]{36}\/frames$/i.test(path)) return 'frames';
   if (/\/voice$/.test(path)) return 'voice';
-  if (/\/(prepare|submit)$/.test(path) || /\/conversations\/[A-Za-z0-9_-]{1,128}\/(messages|finalize)$/.test(path)) return 'provider';
+  if (/\/(prepare|submit|review)$/.test(path) || /\/conversations\/[A-Za-z0-9_-]{1,128}\/(messages|finalize)$/.test(path)) return 'provider';
   return 'api';
 }
 
