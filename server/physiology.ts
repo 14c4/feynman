@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { MonitoringPurpose, MonitoringStatus, MonitoringWindow, PhysiologyHealth, PhysiologySample, PhysiologySource, PipelineStats, QualityNote } from '../shared/types.js';
+import jpeg from 'jpeg-js';
+import type { FrameEncoding, MonitoringPurpose, MonitoringStatus, MonitoringWindow, PhysiologyHealth, PhysiologySample, PhysiologySource, PipelineStats, PresageFace, PresageLiveState, PresageProcessing, QualityNote } from '../shared/types.js';
 import { MONITORING_LIMITS as LIMITS } from '../shared/types.js';
 import { PracticeError } from './domain.js';
 import { assertDevelopmentMode } from './developmentProviders.js';
@@ -10,8 +11,13 @@ import { assertDevelopmentMode } from './developmentProviders.js';
  * Presage SmartSpectra has no browser SDK; its supported JavaScript runtime is the Node SDK
  * (`@smartspectra/node-sdk`, native runtime loaded via koffi). The browser therefore captures
  * small RGB frames, posts them here, and this module feeds them to the SDK with
- * `useCustomInput()` + `sendFrame()`. Frames are processed in memory and dropped; only
- * downsampled readings with their quality indicators are kept.
+ * `useCustomInput()` + `sendFrame()`. Frames arrive as raw RGB (same machine) or high-quality
+ * JPEG (remote servers, roughly 15× less upload) and are decoded here. Frames are processed in
+ * memory and dropped; only downsampled readings with their quality indicators are kept.
+ *
+ * Besides pulse and breathing, the SDK's face metrics (landmarks, blinking, talking) are
+ * requested so the learner can see that Presage itself has locked onto their face. Expression
+ * metrics are deliberately not requested: the app does not interpret expressions.
  *
  * `PHYSIOLOGY_SOURCE=simulated` (development/test only) replaces the SDK with a deterministic
  * generator. Every simulated window and sample is labeled `source: 'simulated'`.
@@ -34,8 +40,9 @@ interface PresageSdk {
 export interface PresageModule {
   SmartSpectraSDK: new (options: { apiKey: string; requestedMetrics?: number[]; logLevel?: number }) => PresageSdk;
   decodeMetrics?: (buffer: Buffer) => unknown;
-  breathingMetrics?: number[];
-  cardioMetrics?: number[];
+  breathingMetrics?: readonly number[];
+  cardioMetrics?: readonly number[];
+  faceMetrics?: readonly number[];
 }
 type ModuleLoader = () => Promise<PresageModule>;
 
@@ -58,6 +65,11 @@ const SDK_FAILURES: Record<number, string> = {
   6: 'Presage’s service returned an error.',
 };
 const BREATHING_RATE = 2;
+const EXPRESSIONS = 14;
+const PROCESSING: Record<number, PresageProcessing> = { 0: 'uninitialized', 1: 'idle', 2: 'starting', 3: 'running', 4: 'stopping', 5: 'error' };
+const HRV_MIN_CONFIDENCE = 50;
+const FACE_POINTS_MAX = 96;
+const BLINK_WINDOW_MS = 60_000;
 
 interface Reading { metric: PhysiologySample['metric']; value: number; confidence: number; stable: boolean; atMs: number }
 interface Live {
@@ -86,6 +98,12 @@ interface Live {
   /** Capture times (ms) of frames Presage reported consuming. */
   consumed: number[];
   stats: PipelineStats;
+  presage: PresageLiveState;
+  /** Capture times (ms) of blink onsets Presage reported, and the last blink state seen. */
+  blinks: number[];
+  lastBlink?: { atUs: number; detected: boolean };
+  /** Capture time (ms) of the first face packet, so a blink rate is only given with enough data. */
+  faceSinceMs?: number;
 }
 
 const RATE_WINDOW_MS = 4000;
@@ -123,6 +141,57 @@ export function readingsFromMetrics(decoded: unknown): Reading[] {
     return [{ metric, value, confidence: Math.max(0, Math.min(100, toNumber(row.confidence) || 0)), stable: row.stable === true, atMs: timestampUs / 1000 }];
   });
   return [...pick('pulse', data.cardio?.pulseRate), ...pick('breathing', data.breathing?.rate)];
+}
+
+type Point = { x?: unknown; y?: unknown };
+export type DetectionRow = { detected?: unknown; stable?: unknown; timestamp?: unknown };
+
+/**
+ * Reads Presage's face metrics. Landmark coordinates are documented only as floating-point 2D
+ * points, so both pixel and already-normalized coordinates are accepted and normalized to 0–1
+ * of the frame; anything that still falls well outside the frame is dropped rather than drawn
+ * in the wrong place.
+ */
+export function faceFromMetrics(decoded: unknown, frameWidth?: number, frameHeight?: number): (Omit<PresageFace, 'blinksPerMinute'> & { blinkRows: DetectionRow[] }) | undefined {
+  const face = (decoded as { face?: { landmarks?: { value?: Point[]; stable?: unknown; timestamp?: unknown }[]; blinking?: DetectionRow[]; talking?: DetectionRow[] } } | undefined)?.face;
+  if (!face) return undefined;
+  const blinkRows = Array.isArray(face.blinking) ? face.blinking : [];
+  const talking = Array.isArray(face.talking) ? face.talking.at(-1) : undefined;
+  const landmarks = Array.isArray(face.landmarks) ? face.landmarks.at(-1) : undefined;
+  if (!landmarks && !blinkRows.length && !talking) return undefined;
+  const raw = (landmarks?.value ?? []).map((point) => [toNumber(point.x), toNumber(point.y)] as [number, number]).filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
+  let points: [number, number][] | undefined;
+  if (raw.length >= 3) {
+    const max = Math.max(...raw.map(([x, y]) => Math.max(x, y)));
+    if (max <= 1.5) points = raw;
+    else if (frameWidth && frameHeight) points = raw.map(([x, y]) => [x / frameWidth, y / frameHeight]);
+  }
+  let box: PresageFace['box'];
+  if (points) {
+    const xs = points.map(([x]) => x); const ys = points.map(([, y]) => y);
+    const x = Math.min(...xs); const y = Math.min(...ys); const w = Math.max(...xs) - x; const h = Math.max(...ys) - y;
+    if (x > -0.2 && y > -0.2 && x + w < 1.2 && y + h < 1.2 && w > 0.02 && h > 0.02) box = { x, y, w, h }; else points = undefined;
+  }
+  const step = points && points.length > FACE_POINTS_MAX ? points.length / FACE_POINTS_MAX : 1;
+  const sampled = points?.filter((_, index) => index % step < 1).map(([x, y]) => [Math.round(x * 1000) / 1000, Math.round(y * 1000) / 1000] as [number, number]);
+  const stamp = toNumber(landmarks?.timestamp ?? blinkRows.at(-1)?.timestamp ?? talking?.timestamp);
+  return {
+    at: new Date(Number.isFinite(stamp) && stamp > 0 ? stamp / 1000 : Date.now()).toISOString(),
+    box, points: sampled, stable: landmarks?.stable === true,
+    blinking: blinkRows.length ? blinkRows.at(-1)!.detected === true : undefined,
+    talking: talking ? talking.detected === true : undefined,
+    blinkRows,
+  };
+}
+
+/** Latest HRV (RMSSD) estimate; valid only at Presage's published ±5 ms standard (confidence ≥ 50). */
+export function hrvFromMetrics(decoded: unknown): PresageLiveState['hrv'] {
+  const list = (decoded as { cardio?: { hrv?: { rmssd?: unknown; confidence?: unknown; timestamp?: unknown }[] } } | undefined)?.cardio?.hrv;
+  const row = Array.isArray(list) ? list.at(-1) : undefined;
+  if (!row) return undefined;
+  const rmssd = toNumber(row.rmssd); const confidence = toNumber(row.confidence) || 0; const stamp = toNumber(row.timestamp);
+  if (!Number.isFinite(rmssd) || rmssd <= 0) return undefined;
+  return { rmssdMs: Math.round(rmssd), confidence: Math.round(confidence), valid: confidence >= HRV_MIN_CONFIDENCE && rmssd < 300, at: new Date(Number.isFinite(stamp) && stamp > 0 ? stamp / 1000 : Date.now()).toISOString() };
 }
 
 /** Deterministic, obviously-synthetic values for development. Never used outside development/test. */
@@ -191,7 +260,7 @@ export class MonitoringService {
     this.sweep();
     if (this.maxActive && [...this.live.values()].filter((item) => item.window.status === 'active').length >= this.maxActive) throw new PracticeError('Camera insights are at capacity on the server right now. Your session continues without them; try again in a few minutes.', 503, 'MONITORING_BUSY');
     const window: MonitoringWindow = { id: randomUUID(), source: this.source, purpose: purpose as MonitoringPurpose, startedAt: new Date().toISOString(), status: 'active', framesReceived: 0, samples: [], quality: [] };
-    const live: Live = { sessionId, window, lastActivity: Date.now(), lastFrameUs: 0, lastMetricUs: { pulse: 0, breathing: 0 }, readings: [], notes: [], accepted: [], consumed: [], stats: { outOfOrder: 0, notProcessed: 0 } };
+    const live: Live = { sessionId, window, lastActivity: Date.now(), lastFrameUs: 0, lastMetricUs: { pulse: 0, breathing: 0 }, readings: [], notes: [], accepted: [], consumed: [], stats: { outOfOrder: 0, notProcessed: 0 }, presage: { metricsPackets: 0 }, blinks: [] };
     if (this.source === 'simulated') { live.originMs = Date.now(); live.emitted = 0; }
     else await this.startPresage(live);
     this.live.set(window.id, live);
@@ -201,26 +270,27 @@ export class MonitoringService {
   }
 
   /**
-   * Accepts a batch of frames: `count` × [float64 LE capture timestamp in epoch µs, width×height×3 RGB bytes].
+   * Accepts a batch of frames. `rgb`: `count` × [float64 LE capture timestamp in epoch µs, width×height×3 RGB bytes].
+   * `jpeg`: `count` × [float64 LE timestamp, uint32 LE byte length, JPEG bytes], decoded here to RGB.
    * Simulated windows accept an empty body as a heartbeat.
    */
-  ingest(sessionId: string, windowId: string, body: Buffer, width: number, height: number, captureFps?: number): MonitoringStatus {
+  ingest(sessionId: string, windowId: string, body: Buffer, width: number, height: number, captureFps?: number, encoding: FrameEncoding = 'rgb'): MonitoringStatus {
     const live = this.owned(sessionId, windowId);
     live.lastActivity = Date.now();
     // The browser's own measurement from capture timestamps; kept for diagnosis only.
     if (captureFps !== undefined && Number.isFinite(captureFps) && captureFps > 0 && captureFps <= 120) live.stats.captureFps = Math.round(captureFps * 10) / 10;
     if (live.window.status === 'active' && this.source === 'presage') {
       if (!Number.isInteger(width) || !Number.isInteger(height) || width < 64 || height < 64 || width > LIMITS.maxWidth || height > LIMITS.maxHeight) throw new PracticeError('Frame size is invalid.');
-      live.stats.width = width; live.stats.height = height;
-      const frameBytes = width * height * 3; const stride = 8 + frameBytes;
-      if (!body.length || body.length % stride !== 0) throw new PracticeError('Frame batch is malformed.');
-      for (let offset = 0; offset < body.length; offset += stride) {
+      for (const frame of encoding === 'jpeg' ? jpegFrames(body) : rgbFrames(body, width, height)) {
         if (live.sendError) break;
-        const timestampUs = Math.round(body.readDoubleLE(offset));
-        // The SDK rejects non-monotonic timestamps; late or duplicate frames are dropped.
+        const timestampUs = Math.round(frame.timestampUs);
+        // The SDK rejects non-monotonic timestamps; late or duplicate frames are dropped before any decoding.
         if (!Number.isFinite(timestampUs) || timestampUs <= live.lastFrameUs) { live.stats.outOfOrder++; continue; }
+        const image = frame.decode();
+        if (image.width < 64 || image.height < 64 || image.width > LIMITS.maxWidth || image.height > LIMITS.maxHeight) throw new PracticeError('Frame size is invalid.');
+        live.stats.width = image.width; live.stats.height = image.height;
         live.lastFrameUs = timestampUs; live.originMs ??= timestampUs / 1000;
-        try { live.sdk?.sendFrame(body.subarray(offset + 8, offset + stride), width, height, width * 3, PIXEL_FORMAT_RGB, timestampUs); live.window.framesReceived++; live.accepted.push(timestampUs / 1000); }
+        try { live.sdk?.sendFrame(image.rgb, image.width, image.height, image.width * 3, PIXEL_FORMAT_RGB, timestampUs); live.window.framesReceived++; live.accepted.push(timestampUs / 1000); }
         catch (error) { live.sendError = error instanceof Error ? error.message : 'Frame processing failed.'; break; }
       }
     } else if (live.window.status === 'active' && live.emitted !== undefined && live.originMs !== undefined) {
@@ -256,11 +326,16 @@ export class MonitoringService {
 
   private async startPresage(live: Live) {
     const sdkModule = await this.module();
-    const requested = [...(sdkModule.breathingMetrics ?? [BREATHING_RATE]), ...(sdkModule.cardioMetrics ?? [PULSE_RATE])];
+    // PRESAGE_FACE_METRICS=off drops face metrics; metrics the key isn't authorized for are simply omitted by the SDK.
+    const face = this.env.PRESAGE_FACE_METRICS === 'off' ? [] : (sdkModule.faceMetrics ?? []).filter((metric) => metric !== EXPRESSIONS);
+    const requested = [...(sdkModule.breathingMetrics ?? [BREATHING_RATE]), ...(sdkModule.cardioMetrics ?? [PULSE_RATE]), ...face];
     const sdk = new sdkModule.SmartSpectraSDK({ apiKey: this.env.PRESAGE_API_KEY ?? '', requestedMetrics: [...new Set(requested)] });
     sdk.on('metrics', ((buffer: Buffer) => {
       const decoded = sdkModule.decodeMetrics ? sdkModule.decodeMetrics(buffer) : undefined;
       if (!decoded || Buffer.isBuffer(decoded)) return;
+      live.presage.metricsPackets++;
+      this.trackFace(live, decoded);
+      const hrv = hrvFromMetrics(decoded); if (hrv) live.presage.hrv = hrv;
       for (const reading of readingsFromMetrics(decoded)) {
         const timestampUs = reading.atMs * 1000;
         if (timestampUs <= live.lastMetricUs[reading.metric]) continue;
@@ -282,10 +357,32 @@ export class MonitoringService {
       if (!retryable) live.failure = live.lastError;
     }) as (...args: never[]) => void);
     // A retryable error can still leave the pipeline in its error state (e.g. the key could not be verified).
-    sdk.on('processingStatus', ((status: number) => { if (status === PROCESSING_STATUS_ERROR) live.failure ??= live.lastError ?? 'Presage processing stopped.'; }) as (...args: never[]) => void);
+    sdk.on('processingStatus', ((status: number) => {
+      live.presage.processing = PROCESSING[status] ?? live.presage.processing;
+      if (status === PROCESSING_STATUS_ERROR) live.failure ??= live.lastError ?? 'Presage processing stopped.';
+    }) as (...args: never[]) => void);
     sdk.useCustomInput(FRAME_TRANSFORM_NONE);
     sdk.start();
     live.sdk = sdk;
+  }
+
+  /** Keeps the latest Presage face lock and counts the blink onsets the SDK reports. */
+  private trackFace(live: Live, decoded: unknown) {
+    const face = faceFromMetrics(decoded, live.stats.width, live.stats.height);
+    if (!face) return;
+    const { blinkRows, ...current } = face;
+    for (const row of blinkRows) {
+      const atUs = toNumber(row.timestamp); const detected = row.detected === true;
+      if (!Number.isFinite(atUs) || (live.lastBlink && atUs <= live.lastBlink.atUs)) continue;
+      if (detected && live.lastBlink && !live.lastBlink.detected) live.blinks.push(atUs / 1000);
+      live.lastBlink = { atUs, detected };
+    }
+    const nowMs = Date.parse(current.at);
+    live.faceSinceMs ??= nowMs;
+    while (live.blinks.length && nowMs - live.blinks[0]! > BLINK_WINDOW_MS) live.blinks.shift();
+    const span = Math.min(BLINK_WINDOW_MS, nowMs - live.faceSinceMs);
+    const blinksPerMinute = live.lastBlink && span >= 20_000 ? Math.round((live.blinks.length * 60_000) / span) : undefined;
+    live.presage.face = { ...current, blinksPerMinute };
   }
 
   /**
@@ -329,7 +426,12 @@ export class MonitoringService {
       }
       live.window.pipeline = { ...live.stats };
     }
-    return { window: structuredClone(live.window), hint: live.hint, code: live.lastCode, latest: { pulse: latest('pulse'), breathing: latest('breathing') }, pipeline: live.window.pipeline };
+    const elapsedMs = live.originMs === undefined ? undefined : this.source === 'presage' ? Math.max(0, live.lastFrameUs / 1000 - live.originMs) : Date.now() - live.originMs;
+    return {
+      window: structuredClone(live.window), hint: live.hint, code: live.lastCode, latest: { pulse: latest('pulse'), breathing: latest('breathing') }, pipeline: live.window.pipeline,
+      elapsedMs: elapsedMs === undefined ? undefined : Math.round(elapsedMs),
+      presage: this.source === 'presage' ? structuredClone(live.presage) : undefined,
+    };
   }
 
   private owned(sessionId: string, windowId: string): Live {
@@ -351,4 +453,37 @@ export class MonitoringService {
     const cutoff = Date.now() - LIMITS.idleMs;
     for (const live of this.live.values()) if (live.window.status === 'active' && live.lastActivity < cutoff) void this.finish(live, 'ended', 'No frames arrived (tab closed, refreshed or disconnected).');
   }
+}
+
+interface IncomingFrame { timestampUs: number; decode(): { width: number; height: number; rgb: Uint8Array } }
+
+/** Splits an RGB batch; frame pixels are referenced, not copied. */
+function* rgbFrames(body: Buffer, width: number, height: number): Generator<IncomingFrame> {
+  const stride = 8 + width * height * 3;
+  if (!body.length || body.length % stride !== 0) throw new PracticeError('Frame batch is malformed.');
+  for (let offset = 0; offset < body.length; offset += stride) {
+    const start = offset;
+    yield { timestampUs: body.readDoubleLE(start), decode: () => ({ width, height, rgb: body.subarray(start + 8, start + stride) }) };
+  }
+}
+
+/** Splits a JPEG batch and validates its framing up front; each frame is decoded only if it will be sent. */
+function* jpegFrames(body: Buffer): Generator<IncomingFrame> {
+  const frames: { timestampUs: number; start: number; end: number }[] = [];
+  for (let offset = 0; offset < body.length;) {
+    if (offset + 12 > body.length) throw new PracticeError('Frame batch is malformed.');
+    const length = body.readUInt32LE(offset + 8); const start = offset + 12; const end = start + length;
+    if (!length || end > body.length) throw new PracticeError('Frame batch is malformed.');
+    frames.push({ timestampUs: body.readDoubleLE(offset), start, end }); offset = end;
+  }
+  if (!frames.length) throw new PracticeError('Frame batch is malformed.');
+  for (const { timestampUs, start, end } of frames) yield {
+    timestampUs,
+    decode: () => {
+      try {
+        const image = jpeg.decode(body.subarray(start, end), { useTArray: true, formatAsRGBA: false, maxResolutionInMP: 0.4, maxMemoryUsageInMB: 32 });
+        return { width: image.width, height: image.height, rgb: image.data };
+      } catch { throw new PracticeError('A camera frame could not be decoded.'); }
+    },
+  };
 }

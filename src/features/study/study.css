@@ -1,5 +1,11 @@
 /* Study session: preparation, assessment, teaching Alex and shared conversation pieces. */
 .study { display: grid; gap: var(--s-6); }
+/* Presage rail beside the study content (the panel renders nothing when the server has no physiology). */
+.study-split { display: grid; gap: var(--s-6); align-items: start; }
+.study-split:has(> .presage-panel) { grid-template-columns: minmax(0, 1fr) 340px; }
+.study-main { display: grid; gap: var(--s-6); min-width: 0; }
+.focus-main:has(.presage-panel--rail) { max-width: calc(1320px + 2 * var(--s-8)); }
+.study:has(.study-split > .presage-panel) .study-head { max-width: none; }
 .study-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s-4); }
 .study-head h1 { margin: var(--s-1) 0 2px; font-size: var(--text-2xl); letter-spacing: -0.03em; }
 .study-head p { margin: 0; font-size: var(--text-sm); }
@@ -166,6 +172,9 @@
 
 /* Teaching side panel */
 .teach-side { display: grid; gap: var(--s-3); position: sticky; top: 76px; }
+.teach:has(.presage-panel) { grid-template-columns: minmax(0, 1fr) 340px; }
+.teach-side:has(.presage-panel.is-active) { position: static; }
+.teach-side .presage-panel--rail { position: static; max-height: none; overflow: visible; }
 .side-card { padding: var(--s-5); display: grid; gap: var(--s-2); box-shadow: var(--shadow-xs); }
 .side-card h3 { margin: 0 0 var(--s-2); font-size: var(--text-md); }
 .side-label { margin-top: var(--s-1); }
@@ -243,8 +252,12 @@
 .alex[data-state='ended'] .alex-ring { opacity: 0.55; }
 .alex[data-state='ended'] .alex-eye { animation: none; transform: scaleY(0.18); }
 
+@media (max-width: 1180px) {
+  .study-split:has(> .presage-panel) { grid-template-columns: minmax(0, 1fr); }
+}
+
 @media (max-width: 1000px) {
-  .teach { grid-template-columns: minmax(0, 1fr); }
+  .teach, .teach:has(.presage-panel) { grid-template-columns: minmax(0, 1fr); }
   .teach-side { position: static; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
 }
 

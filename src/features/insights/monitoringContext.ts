@@ -1,5 +1,7 @@
 import { createContext, useContext } from 'react';
 import type { MonitoringPurpose, MonitoringStatus, PhysiologySource, PracticeSession } from '../../../shared/types';
+import type { FrameEncoding } from './cameraPipeline';
+import type { TrackingStore, TrackingSummary } from './faceTracker';
 
 export type MonitorPhase = 'idle' | 'requesting' | 'calibrating' | 'monitoring' | 'stopping' | 'error';
 
@@ -20,6 +22,14 @@ export interface MonitorState {
   camera?: { label: string; fps?: number };
   /** Plain-language suggestion when the frame rate is low or frames are being lost. */
   advice?: string;
+  /** The camera is open for this window (simulated windows continue without it if it is declined). */
+  cameraOn?: boolean;
+  /** Why the camera is not in use, when the window continues without it. */
+  cameraNote?: string;
+  /** How frames are currently uploaded to Presage. */
+  encoding?: FrameEncoding;
+  /** Local face-tracker summary, refreshed a few times a second. */
+  tracking?: TrackingSummary;
   error?: string;
   /** Summary of the last finished window, shown until dismissed. */
   finished?: { sessionId: string; valid: number; total: number; reason?: string; source: PhysiologySource };
@@ -28,6 +38,8 @@ export interface MonitorState {
 export interface MonitorContextValue {
   state: MonitorState;
   stream?: MediaStream;
+  /** Frame-rate tracker output for the overlay (outside React state). */
+  tracking?: TrackingStore;
   start: (sessionId: string, purpose: MonitoringPurpose, checkinSeconds?: number) => Promise<void>;
   stop: () => Promise<void>;
   dismiss: () => void;

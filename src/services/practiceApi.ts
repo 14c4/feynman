@@ -37,7 +37,7 @@ export const practiceApi: PracticeService = {
   remove: (id, token) => request<{ deleted: true }>(path(id), 'DELETE', token),
   startTextConversation: (id, token) => request<PracticeSession>(`${path(id)}/conversations/text`, 'POST', token, {}),
   startMonitoring: (id, token, purpose) => request<PracticeSession>(`${path(id)}/monitoring`, 'POST', token, { purpose }),
-  sendFrames: (id, token, windowId, frames, width, height, captureFps) => request<MonitoringStatus>(`${path(id)}/monitoring/${encodeURIComponent(windowId)}/frames?w=${width}&h=${height}${captureFps ? `&cfps=${captureFps.toFixed(1)}` : ''}`, 'POST', token, frames),
+  sendFrames: (id, token, windowId, frames, width, height, captureFps, encoding) => request<MonitoringStatus>(`${path(id)}/monitoring/${encodeURIComponent(windowId)}/frames?w=${width}&h=${height}${captureFps ? `&cfps=${captureFps.toFixed(1)}` : ''}${encoding === 'jpeg' ? '&enc=jpeg' : ''}`, 'POST', token, frames),
   stopMonitoring: (id, token, windowId, reason) => request<{ status: MonitoringStatus; session: PracticeSession }>(`${path(id)}/monitoring/${encodeURIComponent(windowId)}/stop`, 'POST', token, reason ? { reason } : {}),
   sendTextMessage: (id, token, conversationId, text) => request<PracticeSession>(`${path(id)}/conversations/${encodeURIComponent(conversationId)}/messages`, 'POST', token, text === undefined ? {} : { text }),
 };

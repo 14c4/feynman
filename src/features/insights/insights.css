@@ -182,60 +182,14 @@ button.journey-step:hover { border-color: var(--green-300); box-shadow: var(--sh
 .focus-tag { font-size: 10.5px; font-weight: 600; color: var(--accent-ink); }
 .journey-feedback { margin: 0; font-size: var(--text-sm); color: var(--muted); line-height: 1.5; }
 
-/* ---------- monitoring ---------- */
-.monitor-prompt { display: flex; align-items: flex-start; gap: var(--s-3); padding: var(--s-4) var(--s-5); box-shadow: var(--shadow-xs); }
-.monitor-prompt--compact { padding: var(--s-4); flex-wrap: wrap; }
-.monitor-prompt--off { background: var(--surface-sunken); box-shadow: none; }
-.monitor-prompt p { margin: 2px 0 0; }
-.monitor-prompt strong { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); font-size: var(--text-sm); }
-.monitor-prompt-icon { display: grid; place-items: center; flex-shrink: 0; width: 30px; height: 30px; border-radius: var(--r-md); background: #eef3f8; color: var(--signal-breathing); }
-.monitor-prompt-main { display: grid; gap: var(--s-2); flex: 1; min-width: 0; }
-.monitor-prompt > .button { flex-shrink: 0; }
-.monitor-consent { display: grid; gap: 6px; margin: var(--s-1) 0; padding-left: var(--s-4); color: var(--text); line-height: 1.5; }
-
-.monitor-dock { position: fixed; z-index: 40; right: var(--s-5); bottom: var(--s-5); display: grid; gap: var(--s-2); width: 300px; padding: var(--s-3) var(--s-4); box-shadow: var(--shadow-md); }
-.monitor-dock p { margin: 0; }
-.monitor-dock-head { display: flex; align-items: center; gap: var(--s-2); font-size: var(--text-sm); }
-.monitor-dock-head .icon-button { width: 26px; height: 26px; }
-.monitor-time { font-size: var(--text-xs); color: var(--muted); }
-.monitor-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line-strong); }
-.monitor-dot[data-tone='live'] { background: var(--signal-pulse); animation: halo 1.6s var(--ease) infinite; }
-.monitor-dot[data-tone='wait'] { background: #d9a441; }
-.monitor-dot[data-tone='done'] { background: var(--accent); }
-.monitor-dot[data-tone='error'] { background: var(--danger-text); }
-.monitor-dock-body { display: flex; gap: var(--s-3); align-items: center; }
-.monitor-preview { width: 84px; height: 63px; flex-shrink: 0; border-radius: var(--r-md); object-fit: cover; transform: scaleX(-1); background: var(--surface-sunken); }
-.monitor-preview--none { display: grid; place-items: center; transform: none; color: var(--subtle); border: 1px dashed var(--line-strong); }
-.monitor-readings { display: grid; gap: 4px; margin: 0; flex: 1; }
-.monitor-readings div { display: flex; justify-content: space-between; gap: var(--s-2); }
-.monitor-readings dt { display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-xs); color: var(--muted); }
-.monitor-readings dd { margin: 0; font-size: var(--text-xs); color: var(--text-strong); white-space: nowrap; }
-/* Keep the page's own controls reachable above the floating dock. */
-body:has(.monitor-dock) :is(.study, .results) { padding-bottom: 300px; }
-body:has(.monitor-dock.is-collapsed) :is(.study, .results) { padding-bottom: 150px; }
-.monitor-dock.is-collapsed { width: auto; padding: var(--s-2) var(--s-2) var(--s-2) var(--s-3); border-radius: 999px; }
-.monitor-toggle { width: 26px; height: 26px; }
-.monitor-dock-head > strong { flex: 1; white-space: nowrap; }
-.monitor-toggle svg { transform: rotate(90deg); transition: transform var(--t-fast) var(--ease); }
-.monitor-dock.is-collapsed .monitor-toggle svg { transform: rotate(-90deg); }
-.monitor-dock.is-collapsed .monitor-toggle + .monitor-toggle svg { transform: none; }
-/* The teaching page has a sticky action bar; sit above it. */
-body:has(.teach-foot) .monitor-dock { bottom: 84px; }
-.monitor-hint { color: var(--muted); line-height: 1.4; }
-.monitor-pipeline { margin: 0; font-size: 10.5px; color: var(--subtle); }
-.monitor-dock-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); }
-.monitor-dock-foot span { font-size: 11px; }
 
 @media (max-width: 760px) {
   .glance { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .journey-steps { grid-template-columns: 1fr; gap: var(--s-2); }
   .journey-link { display: none; }
-  .monitor-dock { left: var(--s-3); right: var(--s-3); bottom: var(--s-3); width: auto; }
-  body:has(.teach-foot) .monitor-dock { bottom: 128px; }
-  .monitor-prompt { flex-wrap: wrap; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tl-halo, .monitor-dot[data-tone='live'] { animation: none; }
+  .tl-halo { animation: none; }
   .tl-answer-mark :is(circle, rect) { transition: none; }
 }
