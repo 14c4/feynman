@@ -10,12 +10,15 @@ export interface SessionContextValue extends SessionState {
   saveDraft: (id: string) => Promise<void>;
   createSession: (input: CreatePracticeInput) => Promise<string>;
   loadSession: (id: string) => Promise<void>;
-  prepareSession: (id: string, clarification?: string) => Promise<void>;
+  /** `suggestion` answers a suggested rewrite: 'accept' adopts it, 'decline' prepares from the original wording. */
+  prepareSession: (id: string, clarification?: string, suggestion?: 'accept' | 'decline') => Promise<void>;
   updateDraft: (id: string, attemptId: string, answer: AssessmentAnswer, questionIndex?: number) => void;
   submitAssessment: (id: string, attemptId: string) => Promise<void>;
   saveAndExit: (id: string) => Promise<void>;
   resumeSession: (id: string) => Promise<void>;
   startRecheck: (id: string) => Promise<void>;
+  /** Leaves an unsubmitted follow-up check to keep teaching Alex; answers are kept. */
+  returnToTeaching: (id: string) => Promise<void>;
   practiceAgain: (id: string) => Promise<void>;
   finishSession: (id: string) => Promise<void>;
   setNervousness: (id: string, when: 'before' | 'after', value: NervousnessValue | null) => Promise<void>;

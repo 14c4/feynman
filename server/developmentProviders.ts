@@ -28,10 +28,10 @@ export function createDevelopmentProviders(env: NodeJS.ProcessEnv): Providers {
   const unavailable = async (): Promise<never> => { throw new PracticeError('DEV MOCK: conversation providers are disabled. No ElevenLabs or Gemini request was made.', 503, 'MOCK_VOICE_UNAVAILABLE'); };
   return {
     mode: 'mock',
-    async generate(_description, _notes, clarification) {
+    async generate(_description, _notes, clarification, _material, keepOriginal) {
       await wait();
       if (scenario === 'prepare-error-once' && !preparationFailed) { preparationFailed = true; throw new PracticeError('DEV MOCK: simulated preparation failure. Retry to recover.', 503, 'MOCK_PREPARATION_ERROR'); }
-      if (scenario === 'clarification' && !clarification?.trim()) return { kind: 'clarification', question: 'DEV MOCK: which arithmetic skill would you like to practise?' };
+      if (scenario === 'clarification' && !clarification?.trim() && !keepOriginal) return { kind: 'clarification', question: 'DEV MOCK: which arithmetic skill would you like to practise?', suggestion: 'DEV MOCK: practise multi-digit multiplication and long division.' };
       return { kind: 'ready', title: 'Development arithmetic fixture', scope: 'DEV MOCK: fixed addition, multiplication and division fixtures. Submitted topic, notes and uploaded files are not interpreted.', concepts: structuredClone(concepts) };
     },
     async grade({ text, working, expectedAnswer }) {

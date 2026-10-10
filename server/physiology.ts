@@ -48,6 +48,15 @@ const VALIDATION_CODES: Record<number, string> = {
 const PIXEL_FORMAT_RGB = 0;
 const FRAME_TRANSFORM_NONE = 0;
 const PULSE_RATE = 15;
+const PROCESSING_STATUS_ERROR = 5;
+const SDK_REPORT_GRACE_MS = 1500;
+/** Plain explanations for SmartSpectraErrorCode values the learner can act on (or report). */
+const SDK_FAILURES: Record<number, string> = {
+  2: 'Presage rejected the API key.',
+  4: 'The Presage account has no remaining credits.',
+  5: 'The server could not reach Presage to verify the API key (network or TLS error).',
+  6: 'Presage’s service returned an error.',
+};
 const BREATHING_RATE = 2;
 
 interface Reading { metric: PhysiologySample['metric']; value: number; confidence: number; stable: boolean; atMs: number }
@@ -64,6 +73,11 @@ interface Live {
   lastCode?: string;
   hint?: string;
   failure?: string;
+  /** Last error the SDK reported, used to explain a later terminal state. */
+  lastError?: string;
+  /** sendFrame threw; the window closes shortly, once the SDK has delivered its own reason. */
+  sendError?: string;
+  failing?: boolean;
   sdk?: PresageSdk;
   /** Simulated: seconds already emitted. */
   emitted?: number;
@@ -201,12 +215,13 @@ export class MonitoringService {
       const frameBytes = width * height * 3; const stride = 8 + frameBytes;
       if (!body.length || body.length % stride !== 0) throw new PracticeError('Frame batch is malformed.');
       for (let offset = 0; offset < body.length; offset += stride) {
+        if (live.sendError) break;
         const timestampUs = Math.round(body.readDoubleLE(offset));
         // The SDK rejects non-monotonic timestamps; late or duplicate frames are dropped.
         if (!Number.isFinite(timestampUs) || timestampUs <= live.lastFrameUs) { live.stats.outOfOrder++; continue; }
         live.lastFrameUs = timestampUs; live.originMs ??= timestampUs / 1000;
         try { live.sdk?.sendFrame(body.subarray(offset + 8, offset + stride), width, height, width * 3, PIXEL_FORMAT_RGB, timestampUs); live.window.framesReceived++; live.accepted.push(timestampUs / 1000); }
-        catch (error) { live.failure = error instanceof Error ? error.message : 'Frame processing failed.'; break; }
+        catch (error) { live.sendError = error instanceof Error ? error.message : 'Frame processing failed.'; break; }
       }
     } else if (live.window.status === 'active' && live.emitted !== undefined && live.originMs !== undefined) {
       const elapsed = Math.floor((Date.now() - live.originMs) / 1000);
@@ -215,6 +230,7 @@ export class MonitoringService {
     }
     this.drain(live);
     if (live.failure && live.window.status === 'active') void this.finish(live, 'error', live.failure);
+    else if (live.sendError && live.window.status === 'active') this.failAfterSdkReport(live);
     return this.status(live);
   }
 
@@ -259,12 +275,28 @@ export class MonitoringService {
     // Presage's own report of whether each frame entered processing: the true processing rate.
     sdk.on('frameSentThrough', ((sent: boolean, timestampUs: number) => { if (sent && Number.isFinite(timestampUs)) live.consumed.push(timestampUs / 1000); else if (!sent) live.stats.notProcessed++; }) as (...args: never[]) => void);
     sdk.on('error', ((code: number, message: string, retryable: boolean) => {
-      live.notes.push({ at: new Date().toISOString(), code: `ERROR_${code}`, hint: typeof message === 'string' ? message.slice(0, 200) : 'Processing error.' });
-      if (!retryable) live.failure = code === 2 ? 'Presage rejected the API key.' : code === 4 ? 'The Presage account has no remaining credits.' : (typeof message === 'string' && message.slice(0, 200)) || 'Presage processing stopped.';
+      const detail = typeof message === 'string' ? message.slice(0, 200) : '';
+      live.notes.push({ at: new Date().toISOString(), code: `ERROR_${code}`, hint: detail || 'Processing error.' });
+      live.lastError = SDK_FAILURES[code] ?? (detail || 'Presage processing stopped.');
+      console.warn(`[presage] window ${live.window.id}: SDK error ${code}${retryable ? ' (retryable)' : ''}: ${detail}`);
+      if (!retryable) live.failure = live.lastError;
     }) as (...args: never[]) => void);
+    // A retryable error can still leave the pipeline in its error state (e.g. the key could not be verified).
+    sdk.on('processingStatus', ((status: number) => { if (status === PROCESSING_STATUS_ERROR) live.failure ??= live.lastError ?? 'Presage processing stopped.'; }) as (...args: never[]) => void);
     sdk.useCustomInput(FRAME_TRANSFORM_NONE);
     sdk.start();
     live.sdk = sdk;
+  }
+
+  /**
+   * A rejected frame usually follows an SDK error (bad key, no network) whose event arrives
+   * moments later. Waiting briefly lets the learner see that reason instead of a generic state error.
+   */
+  private failAfterSdkReport(live: Live) {
+    if (live.failing) return;
+    live.failing = true;
+    const timer = setTimeout(() => { if (live.window.status === 'active') void this.finish(live, 'error', live.failure ?? live.lastError ?? live.sendError ?? 'Presage processing stopped.'); }, SDK_REPORT_GRACE_MS);
+    timer.unref?.();
   }
 
   private drain(live: Live) {
@@ -310,6 +342,7 @@ export class MonitoringService {
     if (live.window.status !== 'active') return;
     this.drain(live);
     live.window.status = status; live.window.endedAt = new Date().toISOString(); live.window.endReason = reason;
+    if (status === 'error') console.warn(`[presage] window ${live.window.id} ended with an error after ${live.window.framesReceived} frames: ${reason}`);
     const sdk = live.sdk; live.sdk = undefined;
     if (sdk) { try { if (sdk.stopAsync) await sdk.stopAsync(); else sdk.stop(); } catch { /* already stopped */ } try { await sdk.destroy(); } catch { /* already released */ } }
   }

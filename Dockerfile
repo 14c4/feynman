@@ -11,6 +11,10 @@ RUN npm run build && npm prune --omit=dev --no-audit --no-fund
 
 FROM node:22-bookworm-slim
 WORKDIR /app
+# The Presage SmartSpectra native runtime verifies the API key over HTTPS using the system CA store.
+# The slim image has none (Node bundles its own CAs, the native library does not), so without this
+# every Presage window fails with "Usage verification failed. Status code: 0" / a network error.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production HOST=0.0.0.0
 COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules

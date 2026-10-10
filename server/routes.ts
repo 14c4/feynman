@@ -181,13 +181,17 @@ export function createPracticeHandler(options: HandlerOptions = {}) {
         let release!: () => void;
         const running = new Promise<void>((resolve) => { release = resolve; });
         inflight.set(`prepare:${session.id}`, running);
+        const previous = session.preparation;
         session.preparation = { status: 'pending' }; await save();
         try {
            const clarification = body.clarification;
            if (clarification !== undefined && (typeof clarification !== 'string' || clarification.length > PRACTICE_LIMITS.description)) throw new PracticeError('Keep your clarification within 1,200 characters.');
+           // Yes / No on a suggested rewrite: "Yes" adopts the server's own stored suggestion as the request; "No" keeps the original wording.
+           const accept = body.acceptSuggestion === true; const keepOriginal = body.keepOriginal === true;
+           if (accept) { if (!previous.suggestedPrompt) throw new PracticeError('There is no suggestion to accept. Continue with your own wording.'); session.description = previous.suggestedPrompt; }
            const request = record.topic ? `Topic: ${record.topic}\nWhat I want to learn: ${session.description}` : session.description;
-           const output = await providers.generate(request, session.notes, typeof clarification === 'string' ? clarification : undefined, materialExcerpt(record.materials, EXCERPT_CHARACTERS.preparation) || undefined);
-           if (output.kind === 'clarification') { session.preparation = { status: 'clarification', clarificationQuestion: output.question }; await save(); json(res, 200, view(record)); return; }
+           const output = await providers.generate(request, session.notes, typeof clarification === 'string' && !keepOriginal ? clarification : undefined, materialExcerpt(record.materials, EXCERPT_CHARACTERS.preparation) || undefined, keepOriginal || accept);
+           if (output.kind === 'clarification') { session.preparation = { status: 'clarification', clarificationQuestion: output.question, ...(output.suggestion ? { suggestedPrompt: output.suggestion } : {}) }; await save(); json(res, 200, view(record)); return; }
            const generated = output.concepts;
            const baseline = makeQuestions(generated, 'baseline'); const reserved = makeQuestions(generated, 'recheck');
            const blueprint: PrivateBlueprint = { concepts: generated.map(({ id, title, description, rubric }) => ({ id, title, description, rubric })), baseline, reserved, questions: Object.fromEntries([...baseline, ...reserved].map((question) => [question.id, question])), version: 1 };
@@ -211,9 +215,19 @@ export function createPracticeHandler(options: HandlerOptions = {}) {
         const blueprint = record.blueprint as PrivateBlueprint; const cycle = session.cycles.find((item) => item.id === session.currentCycleId); if (!cycle) throw new Error('Practice cycle not found.');
          const questions = blueprint.reserved;
         for (const segment of cycle.conversations) if (segment.channel === 'text' && !segment.endedAt) endText(segment);
+        // Returning from "Back to Alex" resumes the same follow-up attempt with its saved answers.
+        const existing = session.attempts.find((item) => item.id === cycle.recheckAttemptId && !item.submittedAt && !item.grade);
+        if (existing) { session.stage = 'recheck'; await save(); json(res, 200, view(record)); return; }
         const recheck = newAttempt('recheck', cycle.id, questions, blueprint.version); session.attempts.push(recheck); cycle.recheckAttemptId = recheck.id; session.stage = 'recheck';
         // Follow-up questions appear immediately, so the attempt starts now.
         startAttempt(session, recheck); await save(); json(res, 200, view(record)); return;
+      }
+      if (req.method === 'POST' && suffix === '/teach') {
+        // "Back to Alex" from the follow-up check. Answers stay on the unsubmitted attempt; nothing is graded.
+        if (session.stage !== 'recheck' || session.lifecycle !== 'active') throw new Error('Returning to Alex is available during the follow-up check.');
+        const recheck = session.attempts.find((item) => item.kind === 'recheck' && item.cycleId === session.currentCycleId);
+        if (recheck?.submittedAt || recheck?.grade) throw new Error('The follow-up check was already submitted.');
+        session.stage = 'teaching'; await save(); json(res, 200, view(record)); return;
       }
       if (req.method === 'POST' && suffix === '/cycles') throw new PracticeError('Additional cycles are deferred for this demo. Start a new practice from Home.', 501, 'DEFERRED');
       if (req.method === 'POST' && suffix === '/finish') { if (session.stage !== 'results') throw new Error('Finish is available after results.'); session.lifecycle = 'completed'; session.completedAt = now(); logEvent(session, 'session_finished', {}, session.completedAt); await save(); json(res, 200, view(record)); return; }

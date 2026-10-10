@@ -277,6 +277,8 @@ export interface PreparationState {
   status: 'idle' | 'pending' | 'clarification' | 'error' | 'ready';
   message?: string;
   clarificationQuestion?: string;
+  /** A suggested rewrite of the learner's request, offered with the clarification. Accepting it is optional. */
+  suggestedPrompt?: string;
 }
 
 export interface PracticeSession {
