@@ -63,8 +63,8 @@ export function ConversationList({ session, liveConversationId, showMessages = t
     const retrying = !exhausted.includes(segment.id);
     const label = `${segment.channel === 'text' ? 'Text' : 'Voice'} conversation ${index + 1} · ${statusLabel(segment, retrying)}`;
     return <div key={segment.id}>
-      {showMessages && segment.messages.length ? <TranscriptPanel messages={segment.messages} label={label} /> : <p className="muted">{label}</p>}
-      {isVoice(segment) && segment.transcriptStatus === 'pending' && !retrying && <button type="button" className="pv-text-button" disabled={busy[session.id]} onClick={() => checkNow(segment.id)}>Check for the transcript again</button>}
+      {showMessages && segment.messages.length ? <TranscriptPanel messages={segment.messages} label={label} /> : <p className="conversation-status"><span className={`dot ${segment.transcriptStatus === 'ready' ? 'dot--accent' : segment.transcriptStatus === 'pending' ? 'dot--warning' : ''}`} aria-hidden="true" />{label}</p>}
+      {isVoice(segment) && segment.transcriptStatus === 'pending' && !retrying && <button type="button" className="text-button" disabled={busy[session.id]} onClick={() => checkNow(segment.id)}>Check for the transcript again</button>}
     </div>;
   })}</div>;
 }

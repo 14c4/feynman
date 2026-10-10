@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "web-mock", "runtimeExecutable": "cmd", "runtimeArgs": ["/c", "set PORT=3111&& npx vite --port 5181 --strictPort"], "port": 5181 }
+  ]
+}
