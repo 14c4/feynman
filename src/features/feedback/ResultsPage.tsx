@@ -54,7 +54,6 @@ export function ResultsPage() {
     <header className="results-head enter">
       <span className="eyebrow"><PracticeIcon name="leaf" size={14} />{session.title}</span>
       <h1 tabIndex={-1}>Here’s what changed.</h1>
-      <p className="muted">These scores reflect these six questions, not overall mastery.</p>
     </header>
 
     {mock && <div className="notice notice--warning" role="status"><PracticeIcon name="info" size={16} /><p>DEV MOCK: these are deterministic test grades from the development fixture, not Gemini evaluation. {conversations.length ? 'Alex’s text replies were scripted test messages.' : 'Teaching was skipped with a test-only bypass; no conversation took place.'}</p></div>}
@@ -83,7 +82,7 @@ export function ResultsPage() {
       <div><span className="eyebrow">What to do next</span>
         <h3 id="next-heading">{weaker.length ? `Explain ${weakTitles.length === 1 ? weakTitles[0] : 'these ideas'} again in a fresh session` : 'Try teaching Alex a new topic'}</h3>
         <p className="muted small">{weaker.length ? 'Read the feedback above, revisit your notes on the gaps, then teach it again with new questions.' : 'Explaining something new is the best way to keep the habit going.'}</p></div>
-      {weaker.length ? <Button variant="secondary" onClick={practiseAgain}>Practise again<PracticeIcon name="arrow" size={16} /></Button> : <Link className="button button--secondary" to="/">New session<PracticeIcon name="arrow" size={16} /></Link>}
+      {weaker.length ? <Button variant="secondary" onClick={practiseAgain}>Practice again<PracticeIcon name="arrow" size={16} /></Button> : <Link className="button button--secondary" to="/">New session<PracticeIcon name="arrow" size={16} /></Link>}
     </section>
 
     <div className="results-details">
