@@ -11,9 +11,10 @@ interface ApiResponse { session?: PracticeSession; error?: { code: string; messa
 async function harness(context: TestContext, scenario = 'normal', delay = '0') {
   const env = { NODE_ENV: 'test', PRACTICE_PROVIDER_MODE: 'mock', MOCK_PROVIDER_SCENARIO: scenario, MOCK_PROVIDER_DELAY_MS: delay };
   const providers = createProviders(env);
-  let grades = 0;
-  const grade = providers.grade;
-  providers.grade = async (input) => { grades++; return grade(input); };
+  let grades = 0; let batches = 0;
+  const gradeAll = providers.gradeAll!;
+  // Counts graded answers and grading requests (one request per assessment).
+  providers.gradeAll = async (items) => { batches++; grades += items.length; return gradeAll(items); };
   const server = createServer(createPracticeHandler({ env, providers }));
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -32,7 +33,7 @@ async function harness(context: TestContext, scenario = 'normal', delay = '0') {
   };
   const access = await call<SessionAccess>('/sessions', 'POST', { description: 'Learner topic', notes: 'Original notes' }, 201);
   token = access.token;
-  return { call, path: `/sessions/${access.session.id}`, access, grades: () => grades };
+  return { call, path: `/sessions/${access.session.id}`, access, grades: () => grades, batches: () => batches };
 }
 
 test('mock providers require explicit non-production mode and never contact providers', async (context) => {
@@ -190,7 +191,8 @@ test('DEV MOCK full cycle: baseline, teaching bypass, matched recheck, grading, 
   assert.equal(results.attempts[1].grade!.totalScore, 4);
   assert.deepEqual(results.attempts[1].grade!.questionGrades.map((grade) => grade.score), [2, 2, 0]);
   assert.ok(results.attempts[1].grade!.questionGrades.slice(0, 2).every((grade) => grade.feedback.includes('DEV MOCK')));
-  assert.equal(api.grades(), 5, 'Three baseline and two non-skipped recheck mock grading calls');
+  assert.equal(api.grades(), 5, 'Three baseline and two non-skipped recheck answers graded');
+  assert.equal(api.batches(), 2, 'One grading request per assessment');
   assert.deepEqual(await api.call(api.path, 'GET'), results, 'Refreshing returns the same server-backed results');
 
   await api.call(api.path, 'PATCH', { nervousnessAfter: 2 });

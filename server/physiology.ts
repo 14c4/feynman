@@ -123,7 +123,7 @@ function simulatedReadings(second: number, originMs: number): Reading[] {
   ];
 }
 
-export interface MonitoringOptions { env?: NodeJS.ProcessEnv; loadPresage?: ModuleLoader }
+export interface MonitoringOptions { env?: NodeJS.ProcessEnv; loadPresage?: ModuleLoader; /** Server-wide cap on concurrently active windows (each runs a native Presage pipeline). */ maxActive?: number }
 
 export class MonitoringService {
   private readonly windows = new Map<string, MonitoringWindow[]>();
@@ -133,9 +133,11 @@ export class MonitoringService {
   private readonly loadPresage: ModuleLoader;
   private presage?: Promise<PresageModule>;
   private readonly sweeper: ReturnType<typeof setInterval>;
+  private readonly maxActive?: number;
 
   constructor(options: MonitoringOptions = {}) {
     this.env = options.env ?? process.env;
+    this.maxActive = options.maxActive;
     const configured = this.env.PHYSIOLOGY_SOURCE || 'presage';
     if (configured !== 'presage' && configured !== 'simulated') throw new Error('PHYSIOLOGY_SOURCE must be presage or simulated.');
     if (configured === 'simulated') assertDevelopmentMode(this.env);
@@ -172,6 +174,8 @@ export class MonitoringService {
     const health = await this.health();
     if (!health.available) throw new PracticeError(health.reason ?? 'Camera insights are unavailable.', 503, 'MONITORING_UNAVAILABLE');
     for (const item of this.live.values()) if (item.sessionId === sessionId) await this.finish(item, 'ended', 'A new monitoring window started.');
+    this.sweep();
+    if (this.maxActive && [...this.live.values()].filter((item) => item.window.status === 'active').length >= this.maxActive) throw new PracticeError('Camera insights are at capacity on the server right now. Your session continues without them; try again in a few minutes.', 503, 'MONITORING_BUSY');
     const window: MonitoringWindow = { id: randomUUID(), source: this.source, purpose: purpose as MonitoringPurpose, startedAt: new Date().toISOString(), status: 'active', framesReceived: 0, samples: [], quality: [] };
     const live: Live = { sessionId, window, lastActivity: Date.now(), lastFrameUs: 0, lastMetricUs: { pulse: 0, breathing: 0 }, readings: [], notes: [], accepted: [], consumed: [], stats: { outOfOrder: 0, notProcessed: 0 } };
     if (this.source === 'simulated') { live.originMs = Date.now(); live.emitted = 0; }

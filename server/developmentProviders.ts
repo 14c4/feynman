@@ -41,6 +41,16 @@ export function createDevelopmentProviders(env: NodeJS.ProcessEnv): Providers {
       const score = correct ? working.trim() && text.trim() ? 2 : 1 : 0;
       return { score, feedback: `DEV MOCK: ${score === 2 ? 'Expected fixture total with working.' : score === 1 ? 'Expected fixture total; add working for the second test point.' : 'Response does not match the fixture total.'} This is deterministic test feedback, not Gemini evaluation.`, evidence: text.trim() || working.trim() };
     },
+    // Same deterministic rules as `grade`, in one call like the real batch grader.
+    async gradeAll(items) {
+      await wait();
+      if (scenario === 'grade-error-once' && !gradingFailed) { gradingFailed = true; throw new PracticeError('DEV MOCK: simulated grading failure. Your answers are saved; retry to recover.', 429, 'MOCK_GRADING_ERROR'); }
+      return Object.fromEntries(items.map(({ id, text, working, expectedAnswer }) => {
+        const correct = text.trim() === expectedAnswer || (!text.trim() && working.trim() === expectedAnswer);
+        const score = correct ? working.trim() && text.trim() ? 2 : 1 : 0;
+        return [id, { score, feedback: `DEV MOCK: ${score === 2 ? 'Expected fixture total with working.' : score === 1 ? 'Expected fixture total; add working for the second test point.' : 'Response does not match the fixture total.'} This is deterministic test feedback, not Gemini evaluation.`, evidence: text.trim() || working.trim() }];
+      }));
+    },
     // Scripted, clearly labeled test turns. They exercise the real text-conversation
     // lifecycle without pretending to be an AI response.
     async alexReply(context, messages) {

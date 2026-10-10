@@ -80,6 +80,8 @@ function AssessmentPanel({ session, attempt }: { session: PracticeSession; attem
   </div>;
 }
 
+const VOICE_IDLE_MS = 120_000;
+
 function micError(error: unknown): string {
   const name = error instanceof DOMException ? error.name : '';
   if (name === 'NotAllowedError' || name === 'SecurityError') return 'Microphone access is blocked. Allow the microphone for this site in your browser’s address-bar or site settings, then press Start talking again. You can also type to Alex instead.';
@@ -206,9 +208,20 @@ function TeachingPanel({ session }: { session: PracticeSession }) {
   const speakingRef = useRef(false);
   useEffect(() => { speakingRef.current = voice.isSpeaking; }, [voice.isSpeaking]);
   const getLevel = useCallback(() => speakingRef.current ? getOutputVolume() : getInputVolume(), [getInputVolume, getOutputVolume]);
+  // Voice minutes are billed while connected. A call with no speech from either side for
+  // VOICE_IDLE_MS is ended (the transcript so far is still saved); the learner can reconnect.
+  const lastActivity = useRef(0);
+  const [idleEnded, setIdleEnded] = useState(false);
+  useEffect(() => { if (connected) lastActivity.current = Date.now(); }, [connected, messages.length, userSpeaking, voice.isSpeaking]);
+  useEffect(() => {
+    if (!connected) return;
+    const timer = setInterval(() => { if (Date.now() - lastActivity.current > VOICE_IDLE_MS) { setIdleEnded(true); endSession(); } }, 5000);
+    return () => clearInterval(timer);
+  }, [connected, endSession]);
 
   async function connect() {
-    setVoiceError(''); setStarting(true);
+    if (starting || connected) return;
+    setVoiceError(''); setStarting(true); setIdleEnded(false);
     try {
       // Ask for the microphone before requesting a signed URL so a denial costs nothing and is recoverable.
       if (!navigator.mediaDevices?.getUserMedia) throw new Error('This browser can’t use a microphone on this page. Type to Alex instead.');
@@ -237,6 +250,7 @@ function TeachingPanel({ session }: { session: PracticeSession }) {
     ? voice.isSpeaking ? 'speaking' : userSpeaking ? 'user-speaking' : lastLive?.role === 'learner' && !voice.isMuted ? 'thinking' : 'listening'
     : voiceEnded ? 'ended' : 'idle';
   const voiceDetail = connected ? voice.isMuted ? 'Your microphone is muted. Alex can’t hear you.' : 'Speak naturally. Alex may interrupt with a question.'
+    : idleEnded ? 'The call ended after two quiet minutes to save voice time. Your transcript is kept; start talking again whenever you’re ready.'
     : voiceEnded ? 'The saved transcript appears below once the voice service has processed it.' : 'Explain the focus concepts out loud. Alex will ask questions when something isn’t clear.';
   const savedConversations = cycle.conversations.some((segment) => segment.id !== liveId);
 

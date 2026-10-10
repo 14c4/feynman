@@ -44,7 +44,7 @@ function fakeProviders() {
 }
 
 async function harness(context: TestContext, providers: Providers, env: NodeJS.ProcessEnv = { ELEVENLABS_AGENT_ID: 'agent-test' }) {
-  const server = createServer(createPracticeHandler({ env, providers }));
+  const server = createServer(createPracticeHandler({ env, providers, transcriptIntervalMs: 0 }));
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const nativeFetch = globalThis.fetch;

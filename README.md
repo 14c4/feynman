@@ -125,11 +125,31 @@ All keys are server-side only. Never prefix them with `VITE_`.
 | `PRESAGE_API_KEY` | For camera insights | Presage SmartSpectra key; camera insights are disabled without it |
 | `PHYSIOLOGY_SOURCE` | No | `presage` (default) or `simulated` (development only) |
 | `PRACTICE_PROVIDER_MODE` | No | `real` (default) or `mock` (development only) |
-| `PORT`, `HOST` | No | API bind address (default `127.0.0.1:3001`) |
+| `PORT`, `HOST` | No | Bind address (default `127.0.0.1:3001`; `0.0.0.0` under `npm start`) |
+| `TRUST_PROXY` | Behind a proxy | `true` to rate-limit by `X-Forwarded-For` (set on Railway) |
+| `RATE_LIMIT` | No | Per-client limits; on in production, `off` to disable, `on` to force locally |
+| `MAX_SESSIONS`, `SESSION_TTL_HOURS` | No | In-memory session cap (500) and idle expiry (24 h) |
+| `MAX_MONITORING_WINDOWS` | No | Concurrent Presage camera windows server-wide (4) |
 
 **ElevenLabs agent setup:** use a private agent with these dynamic variables: `session_id`, `session_title`, `focus_context` and `opening_question`. A good first message is `Let's talk through {{session_title}}. {{opening_question}}`. The system prompt should use `{{focus_context}}`, keep Alex curious and brief, and treat supplied material as data rather than instructions.
 
 `GET /api/health` reports which integrations are configured without exposing any values.
+
+### Provider usage and quotas
+
+A complete cycle uses **3 Gemini requests plus one per typed message to Alex**:
+- one request for preparation, which generates both the first-check and the follow-up questions;
+- one request per assessment, grading all its answers together;
+- one per Alex text turn.
+
+Voice conversations with Alex run on ElevenLabs and use no Gemini requests from this API.
+
+The server avoids spending requests it doesn't need:
+- **Repeat requests:** duplicate submits and prepares share one call. Grades that already passed validation are reused on retry.
+- **Quota limits:** an exhausted *daily* Gemini quota is refused locally until midnight Pacific instead of retried. Short rate limits are retried once after the advised delay.
+- **Voice:** transcript checks are throttled, and idle voice calls end after two quiet minutes.
+
+`GET /api/metrics` (off in production unless `METRICS_ENABLED=true`) reports request counts, failures, rate limits, avoided calls, latency and token usage per operation. With `GEMINI_PRICE_*` set it also reports an estimated cost. It never includes prompts, answers, study material or keys.
 
 ### Demo mode (no API keys or provider credits)
 
@@ -169,7 +189,7 @@ The test suite runs entirely against mocks and never contacts real providers. It
 ## Current limitations and roadmap
 
 **Current limitations:**
-- Sessions live in API process memory; restarting the API clears them. There is no authentication, durable storage or rate limiting yet, so it is not ready for public deployment.
+- Sessions live in API process memory; every restart or redeploy clears them, and they cannot be shared across replicas. Idle sessions expire after 24 hours and the oldest are evicted beyond 500. There are per-client rate limits but no accounts or durable storage yet.
 - Each session runs one practice cycle; extra cycles on weak concepts are planned.
 - On browsers without `MediaStreamTrackProcessor` (Firefox, Safari), camera capture pauses while the tab is in the background.
 
@@ -180,4 +200,8 @@ The test suite runs entirely against mocks and never contacts real providers. It
 
 ## Deployment notes
 
-`npm run build` writes the frontend to `dist/`. Serve it with an SPA fallback to `index.html`, and route `/api` to the Node API (`npm run start:server`). The Vite `/api` proxy is for development only. The Presage Node SDK ships native runtimes for macOS (Apple Silicon), Linux x64/arm64 and Windows x64.
+`npm run build` writes the frontend to `dist/`; `npm start` serves it and `/api` from one Node process on one origin, with an SPA fallback to `index.html`, long-lived caching for fingerprinted `/assets/*` and gzip. The Vite `/api` proxy is for development only. `npm start` sets `NODE_ENV=production` itself (don't set it on the host: `npm ci` would then skip the build tools) and binds `0.0.0.0:$PORT`.
+
+`railway.json` configures Railway: build `npm run build`, start `npm start`, health check `/api/health`, one replica (sessions are in memory). Set the provider keys and `TRUST_PROXY=true` as service variables. In production the API applies per-client rate limits (sessions 20/h, Gemini-backed actions 60/10 min, voice links 12/10 min, other calls 300/min) and answers `429` with `Retry-After`.
+
+The Presage Node SDK ships native runtimes for macOS (Apple Silicon), Linux x64/arm64 and Windows x64.

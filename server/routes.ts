@@ -1,16 +1,17 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { AssessmentAnswer, AssessmentAttempt, ConversationSegment, PracticeCycle, PracticeQuestion, PracticeSession, SessionEvent, TranscriptMessage, UpdatePracticeInput, NervousnessValue, IntegrationHealth } from '../shared/types.js';
+import type { AssessmentAnswer, AssessmentAttempt, ConversationSegment, PracticeCycle, PracticeQuestion, PracticeSession, QuestionGrade, SessionEvent, TranscriptMessage, UpdatePracticeInput, NervousnessValue, IntegrationHealth } from '../shared/types.js';
 import { MONITORING_LIMITS, PRACTICE_LIMITS } from '../shared/types.js';
 import { makeQuestions, PracticeError, publicQuestion, totalGrades, validateGrade, type PrivateBlueprint } from './domain.js';
-import { createProviders, type Providers } from './providers.js';
+import { createProviders, ProviderError, type GradeItem, type Providers } from './providers.js';
 import { MemorySessionStore, type SessionStore, type StoredRecord } from './store.js';
 import { assertDevelopmentMode } from './developmentProviders.js';
 import { EXCERPT_CHARACTERS, extractMaterials, materialExcerpt } from './materials.js';
 import { alexContext, openingQuestion, voiceFocusContext } from './alex.js';
 import { MonitoringService } from './physiology.js';
+import { bucketFor, clientAddress, positiveInteger, RateLimiter, rateLimitEnabled } from './protection.js';
 
-interface HandlerOptions { store?: SessionStore; providers?: Providers; env?: NodeJS.ProcessEnv; monitoring?: MonitoringService }
+interface HandlerOptions { store?: SessionStore; providers?: Providers; env?: NodeJS.ProcessEnv; monitoring?: MonitoringService; /** Minimum gap between ElevenLabs transcript checks per conversation. */ transcriptIntervalMs?: number; /** Per-client limits; defaults to on in production (see protection.ts). Pass null to disable. */ limiter?: RateLimiter | null }
 const now = () => new Date().toISOString();
 const hash = (token: string) => createHash('sha256').update(token).digest('hex');
 const safeEqual = (a: string, b: string) => { const left = Buffer.from(a); const right = Buffer.from(b); return left.length === right.length && timingSafeEqual(left, right); };
@@ -38,14 +39,30 @@ function safeConversationMessages(payload: unknown, sessionId: string, startedAt
 }
 
 export function createPracticeHandler(options: HandlerOptions = {}) {
-  const store = options.store ?? new MemorySessionStore();
   const env = options.env ?? process.env;
   const providers = options.providers ?? createProviders(env);
   if (providers.mode === 'mock') assertDevelopmentMode(env);
-  const monitoring = options.monitoring ?? new MonitoringService({ env });
+  const monitoring = options.monitoring ?? new MonitoringService({ env, maxActive: positiveInteger(env.MAX_MONITORING_WINDOWS, 4) });
+  const store = options.store ?? new MemorySessionStore({ maxSessions: positiveInteger(env.MAX_SESSIONS, 500), idleTtlMs: positiveInteger(env.SESSION_TTL_HOURS, 24) * 3_600_000, onEvict: (id) => monitoring.delete(id) });
+  const limiter = options.limiter === undefined ? (rateLimitEnabled(env) ? new RateLimiter() : null) : options.limiter;
+  const trustProxy = env.TRUST_PROXY === 'true' || env.TRUST_PROXY === '1';
+  const transcriptIntervalMs = options.transcriptIntervalMs ?? 2500;
   const view = (record: StoredRecord) => publicSession(record, monitoring);
-  const json = (res: ServerResponse, status: number, body: unknown) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(body)); };
+  const json = (res: ServerResponse, status: number, body: unknown, retryAfterMs?: number) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...(retryAfterMs !== undefined ? { 'Retry-After': String(Math.max(1, Math.ceil(retryAfterMs / 1000))) } : {}) }); res.end(JSON.stringify(body)); };
   const replying = new Set<string>();
+  /**
+   * One provider operation per key at a time. A duplicate request (double click, refresh, a second tab)
+   * waits for the running one and then returns the stored result instead of calling the provider again.
+   */
+  const inflight = new Map<string, Promise<unknown>>();
+  const once = async (key: string, operation: () => Promise<void>): Promise<boolean> => {
+    const running = inflight.get(key);
+    if (running) { providers.usage?.record({ provider: key.startsWith('history') ? 'elevenlabs' : 'gemini', operation: key.split(':')[0]!, ok: true, latencyMs: 0, avoided: 'dedupe' }); await running.catch(() => undefined); return false; }
+    const promise = operation().finally(() => inflight.delete(key));
+    inflight.set(key, promise);
+    await promise; return true;
+  };
+  const fresh = async (id: string) => { const latest = await store.get(id); if (!latest) throw new PracticeError('Practice session not found.', 404, 'NOT_FOUND'); return latest; };
   const readRaw = async (req: IncomingMessage, limit: number): Promise<Buffer> => {
     const chunks: Buffer[] = []; let length = 0;
     for await (const chunk of req) { const buffer = Buffer.from(chunk); length += buffer.length; if (length <= limit) chunks.push(buffer); }
@@ -84,6 +101,19 @@ export function createPracticeHandler(options: HandlerOptions = {}) {
     }
     try {
       const url = new URL(req.url ?? '/', 'http://localhost'); const path = url.pathname;
+      if (limiter) {
+        const verdict = limiter.hit(clientAddress(req, trustProxy), bucketFor(req.method, path));
+        if (!verdict.ok) {
+          const seconds = Math.max(1, Math.ceil(verdict.retryAfterMs / 1000)); const wait = seconds >= 90 ? `${Math.ceil(seconds / 60)} minutes` : `${seconds} seconds`;
+          // Drain any upload so the client sees the response instead of a reset connection.
+          req.resume(); json(res, 429, { error: { code: 'TOO_MANY_REQUESTS', message: `Too many requests from this connection. Please wait about ${wait} and try again; your work is saved.` } }, verdict.retryAfterMs); return;
+        }
+      }
+      if (req.method === 'GET' && path === '/api/metrics') {
+        // Aggregate counts only (no prompts, answers or keys). Off in production unless explicitly enabled.
+        if (env.NODE_ENV === 'production' && env.METRICS_ENABLED !== 'true') { json(res, 404, { error: { code: 'NOT_FOUND', message: 'This API endpoint does not exist.' } }); return; }
+        json(res, 200, { providerMode: providers.mode ?? 'real', ...(providers.usage?.snapshot() ?? { note: 'DEV MOCK: no provider requests are made.' }) }); return;
+      }
       if (req.method === 'GET' && path === '/api/health') {
         const health: IntegrationHealth = { status: 'ok', service: 'feynman.ai', providerMode: providers.mode ?? 'real', geminiConfigured: providers.mode !== 'mock' && Boolean(env.GEMINI_API_KEY), voiceConfigured: providers.mode !== 'mock' && Boolean(env.ELEVENLABS_API_KEY && env.ELEVENLABS_AGENT_ID), physiology: await monitoring.health() }; json(res, 200, health); return;
       }
@@ -141,6 +171,16 @@ export function createPracticeHandler(options: HandlerOptions = {}) {
       }
       if (req.method === 'POST' && suffix === '/prepare') {
         if (session.stage !== 'preparing' || session.lifecycle !== 'active') throw new Error('Preparation is not available in this stage.');
+        // A second prepare while one is generating (refresh, double click) waits for it instead of generating again.
+        if (inflight.has(`prepare:${session.id}`)) {
+          await once(`prepare:${session.id}`, async () => undefined);
+          const latest = await fresh(session.id); responseRecord = latest;
+          if (latest.session.preparation.status === 'error') throw new PracticeError(latest.session.preparation.message ?? 'Preparation did not finish. Please try again.', 409, 'PREPARATION_FAILED');
+          json(res, 200, view(latest)); return;
+        }
+        let release!: () => void;
+        const running = new Promise<void>((resolve) => { release = resolve; });
+        inflight.set(`prepare:${session.id}`, running);
         session.preparation = { status: 'pending' }; await save();
         try {
            const clarification = body.clarification;
@@ -154,9 +194,16 @@ export function createPracticeHandler(options: HandlerOptions = {}) {
            record.blueprint = blueprint; session.title = record.topic || output.title?.slice(0, 100) || session.title; session.concepts = generated.map(({ id, title, description }) => ({ id, title, description })); session.scope = output.scope || generated.map((concept) => concept.description).join('\n');
           session.attempts.push(newAttempt('baseline', session.currentCycleId, blueprint.baseline, 1)); session.stage = 'baseline'; session.preparation = { status: 'ready' }; logEvent(session, 'concepts_ready'); await save(); json(res, 200, view(record));
           } catch (error) { session.preparation = { status: 'error', message: safeError(error) }; await save(); throw error; }
+        finally { inflight.delete(`prepare:${session.id}`); release(); }
         return;
       }
-      if (req.method === 'POST' && suffix === '/submit') { await submit(record, body.attemptId, providers, save); json(res, 200, view(record)); return; }
+      if (req.method === 'POST' && suffix === '/submit') {
+        const key = `submit:${typeof body.attemptId === 'string' ? body.attemptId : ''}`;
+        if (await once(key, () => submit(record, body.attemptId, providers, save))) { json(res, 200, view(record)); return; }
+        const latest = await fresh(session.id); responseRecord = latest;
+        if (latest.session.operationError) throw new PracticeError(latest.session.operationError, 409, 'GRADING_FAILED');
+        json(res, 200, view(latest)); return;
+      }
       if (req.method === 'POST' && suffix === '/pause') { if (session.lifecycle !== 'active') throw new Error('Session is not active.'); session.lifecycle = 'paused'; logEvent(session, 'session_paused'); await save(); json(res, 200, view(record)); return; }
       if (req.method === 'POST' && suffix === '/resume') { if (session.lifecycle === 'completed') throw new PracticeError('This practice session is finished.', 409); if (session.lifecycle === 'paused') logEvent(session, 'session_resumed'); session.lifecycle = 'active'; await save(); json(res, 200, view(record)); return; }
       if (req.method === 'POST' && suffix === '/recheck') {
@@ -210,8 +257,11 @@ export function createPracticeHandler(options: HandlerOptions = {}) {
         if (record.conversationOwners[conversationId] !== session.id) throw new Error('Conversation does not belong to this practice session.');
         // Duplicate callbacks and later checks are no-ops once the transcript is saved.
         if (segment.transcriptStatus === 'ready') { json(res, 200, view(record)); return; }
+        // Several views poll the same pending transcript; check ElevenLabs at most every few seconds per conversation.
+        if (segment.lastCheckedAt && Date.now() - Date.parse(segment.lastCheckedAt) < transcriptIntervalMs) { providers.usage?.record({ provider: 'elevenlabs', operation: 'conversation_history', ok: true, latencyMs: 0, avoided: 'throttle' }); json(res, 200, view(record)); return; }
+        if (inflight.has(`history:${conversationId}`)) { await once(`history:${conversationId}`, async () => undefined); const latest = await fresh(session.id); responseRecord = latest; json(res, 200, view(latest)); return; }
         segment.endedAt ??= now(); segment.checkAttempts = (segment.checkAttempts ?? 0) + 1; segment.lastCheckedAt = now(); await save();
-        const raw = await providers.history(conversationId); const data = obj(raw);
+        let raw: unknown; await once(`history:${conversationId}`, async () => { raw = await providers.history(conversationId); }); const data = obj(raw);
         if (data.agent_id !== env.ELEVENLABS_AGENT_ID || obj(data.metadata).agent_id !== undefined && obj(data.metadata).agent_id !== env.ELEVENLABS_AGENT_ID) throw new Error('Conversation agent could not be verified.');
         const variables = obj(data.conversation_initiation_client_data); const vars = obj(variables.dynamic_variables);
         if (vars.session_id !== session.id) throw new Error('Conversation session could not be verified.');
@@ -221,7 +271,10 @@ export function createPracticeHandler(options: HandlerOptions = {}) {
         await save(); json(res, 200, view(record)); return;
       }
       json(res, 404, { error: { code: 'NOT_FOUND', message: 'This API endpoint does not exist.' } });
-    } catch (error) { json(res, statusFor(error), { error: { code: error instanceof PracticeError ? error.code : 'REQUEST_FAILED', message: safeError(error) }, ...(responseRecord ? { session: view(responseRecord) } : {}) }); }
+    } catch (error) {
+      const status = statusFor(error);
+      json(res, status, { error: { code: error instanceof PracticeError ? error.code : 'REQUEST_FAILED', message: safeError(error) }, ...(responseRecord ? { session: view(responseRecord) } : {}) }, error instanceof ProviderError && status === 429 ? error.retryAfterMs ?? 30_000 : undefined);
+    }
   };
 }
 
@@ -275,15 +328,32 @@ async function submit(record: StoredRecord, attemptId: unknown, providers: Provi
   session.stage = attempt.kind === 'baseline' ? 'baseline_evaluating' : 'recheck_evaluating'; await save();
   try {
     const blueprint = record.blueprint as PrivateBlueprint;
-     const questionGrades = await Promise.all(attempt.questions.map(async (question, index) => {
-      const answer = attempt.answers[index]!; if (answer.skipped) return { questionId: question.id, conceptId: question.conceptId, score: 0 as const, maxScore: 2 as const, feedback: 'Skipped; no evidence was provided to assess.', evidence: '' };
+    // Grades that already passed validation survive a failed attempt, so a retry only regrades what is missing.
+    const cache = record.gradeCache ??= {};
+    let pending: GradeItem[] = attempt.questions.flatMap((question, index) => {
+      const answer = attempt.answers[index]!;
+      if (answer.skipped || cache[question.id]) return [];
       const concept = blueprint.concepts.find((item) => item.id === question.conceptId); if (!concept) throw new Error('Assessment blueprint is unavailable.');
-       const expectedAnswer = blueprint.questions[question.id]?.expectedAnswer; if (!expectedAnswer) throw new Error('Assessment answer key is unavailable.');
-       const grade = await providers.grade({ question: question.prompt, rubric: concept.rubric, expectedAnswer, text: answer.text, working: answer.working });
-       validateGrade(grade, answer.text, answer.working);
-      return { questionId: question.id, conceptId: question.conceptId, score: grade.score, maxScore: 2 as const, feedback: grade.feedback, evidence: grade.evidence };
-    }));
+      const expectedAnswer = blueprint.questions[question.id]?.expectedAnswer; if (!expectedAnswer) throw new Error('Assessment answer key is unavailable.');
+      return [{ id: question.id, question: question.prompt, rubric: concept.rubric, expectedAnswer, text: answer.text, working: answer.working }];
+    });
+    // One request grades the whole assessment; items whose evidence fails validation get one focused regrade.
+    for (let round = 0; pending.length && round < 2; round++) {
+      const raw = providers.gradeAll ? await providers.gradeAll(pending)
+        : Object.fromEntries(await Promise.all(pending.map(async (item) => [item.id, await providers.grade(item)] as const)));
+      const failed: GradeItem[] = [];
+      for (const item of pending) {
+        try { const result = validateGrade(raw[item.id], item.text, item.working); cache[item.id] = { questionId: item.id, conceptId: attempt.questions.find((question) => question.id === item.id)!.conceptId, score: result.score, maxScore: 2, feedback: result.feedback, evidence: result.evidence }; }
+        catch { failed.push(item); }
+      }
+      pending = failed;
+    }
+    if (pending.length) throw new PracticeError('Grading returned unsupported evidence. Your answers are saved; please retry.', 502, 'INVALID_GRADE');
+    const questionGrades: QuestionGrade[] = attempt.questions.map((question, index) => attempt.answers[index]!.skipped
+      ? { questionId: question.id, conceptId: question.conceptId, score: 0, maxScore: 2, feedback: 'Skipped; no evidence was provided to assess.', evidence: '' }
+      : cache[question.id]!);
     const grade = totalGrades(questionGrades);
+    for (const question of attempt.questions) delete cache[question.id];
      attempt.grade = grade; attempt.submittedAt = now(); session.operationError = undefined;
     logEvent(session, 'assessment_graded', { attemptId: attempt.id, kind: attempt.kind, score: grade.totalScore, maxScore: grade.maxScore }, grade.gradedAt);
     if (attempt.kind === 'baseline') { session.stage = 'teaching'; logEvent(session, 'teaching_started'); const cycle = session.cycles.find((item) => item.id === session.currentCycleId)!; cycle.focusConceptIds = grade.questionGrades.filter((item) => item.score < 2).map((item) => item.conceptId); }
@@ -291,8 +361,6 @@ async function submit(record: StoredRecord, attemptId: unknown, providers: Provi
     await save();
    } catch (error) { session.stage = attempt.kind === 'baseline' ? 'baseline_evaluating' : 'recheck_evaluating'; session.operationError = safeError(error); await save(); throw error; }
 }
-
-export const handleRequest = createPracticeHandler();
 
 function statusFor(error: unknown): number { if (error instanceof PracticeError) return error.status; const message = errorMessage(error); if (/too large/i.test(message)) return 413; if (/stage|active|submitted|cannot|complete|resume|paused/i.test(message)) return 409; return 400; }
 function safeError(error: unknown): string { return error instanceof PracticeError ? error.message : errorMessage(error); }
