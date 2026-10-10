@@ -9,6 +9,7 @@ import type { AssessmentGrade, QuestionGrade } from '../../../shared/types';
 import { CONFIDENCE_LABELS } from '../../../shared/insights';
 import { ReadinessInsights } from '../insights/ReadinessInsights';
 import { MonitorPrompt } from '../insights/MonitorDock';
+import { ReviewSheetPanel } from './ReviewSheet';
 import '../study/study.css';
 import './feedback.css';
 
@@ -98,6 +99,8 @@ export function ResultsPage() {
       <details className="disclosure" open={pending}><summary>Conversations with Alex<span className="summary-meta">{conversations.length} {conversations.length === 1 ? 'conversation' : 'conversations'}</span><PracticeIcon name="chevron" size={14} /></summary>
         <div className="disclosure-body">{conversations.length ? <ConversationList session={session} /> : <p className="muted small">No conversation took place in this session.</p>}</div></details>
     </div>
+
+    <ReviewSheetPanel key={session.id} session={session} />
 
     <section className="reflection card" aria-labelledby="reflection-heading">
       <div><span className="eyebrow">Optional self-report · not a diagnosis</span><h3 id="reflection-heading">How nervous do you feel now?</h3>

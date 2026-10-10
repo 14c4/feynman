@@ -71,6 +71,21 @@ export function createDevelopmentProviders(env: NodeJS.ProcessEnv): Providers {
       ];
       return `DEV MOCK scripted Alex (test message, not AI): ${prompts[(turn - 1) % prompts.length]}`;
     },
+    // Fixed, labeled test content built only from the session's own answers; never presented as Gemini output.
+    async reviewSheet(input) {
+      await wait();
+      const gaps = input.concepts.filter((concept) => concept.status !== 'strength' && concept.status !== 'insufficient');
+      return {
+        concepts: gaps.map((concept) => {
+          const answered = [concept.firstCheck, concept.followUp].find((answer) => answer && answer.score !== null && answer.answer.trim());
+          return { conceptId: concept.id, status: concept.status, group: '', originalExplanation: answered?.answer ?? '', originalIsQuote: Boolean(answered),
+            misconception: `DEV MOCK: the answer did not match the fixture total.`, correctedUnderstanding: `DEV MOCK: ${concept.description} The fixture answer for the first check is ${concept.firstCheck?.expectedAnswer ?? 'unavailable'}.`,
+            studentMetaphor: '', refinedMetaphor: '', metaphorLimits: '', workedExample: `DEV MOCK: ${concept.followUp?.question ?? concept.firstCheck?.question ?? ''}\n1. Expected fixture total: ${concept.followUp?.expectedAnswer ?? concept.firstCheck?.expectedAnswer ?? ''}.`,
+            whatChanged: `DEV MOCK: scores moved from ${concept.firstCheck?.score ?? 'skipped'}/2 to ${concept.followUp?.score ?? 'skipped'}/2.`, remember: '' };
+        }),
+        reviewNext: gaps.map((concept) => ({ conceptId: concept.id, focus: `DEV MOCK: practise ${concept.title.toLowerCase()} with working shown.` })),
+      };
+    },
     voice: unavailable,
     history: unavailable,
   };
