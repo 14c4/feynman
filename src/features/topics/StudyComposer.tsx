@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { MATERIAL_LIMITS, PRACTICE_LIMITS } from '../../../shared/types';
 import { Button } from '../../components/Button';
 import { PracticeIcon } from '../../components/practice/PracticeIcon';
@@ -23,7 +23,20 @@ interface StudyComposerProps {
 }
 
 const size = (bytes: number) => bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-const kind = (name: string) => name.toLowerCase().endsWith('.pdf') ? 'PDF' : name.toLowerCase().endsWith('.txt') ? 'TXT' : 'MD';
+const extensionOf = (file: File) => file.name.toLowerCase().match(/\.[a-z]+$/)?.[0] ?? '';
+const isImage = (file: File) => (MATERIAL_LIMITS.imageExtensions as readonly string[]).includes(extensionOf(file));
+const kind = (file: File) => extensionOf(file) === '.pdf' ? 'PDF' : extensionOf(file) === '.txt' ? 'TXT' : 'MD';
+
+/** Small preview of a chosen image; the object URL is released when the file goes away. */
+function Thumb({ file }: { file: File }) {
+  const [url, setUrl] = useState<string>();
+  useEffect(() => {
+    const next = URL.createObjectURL(file);
+    setUrl(next);
+    return () => URL.revokeObjectURL(next);
+  }, [file]);
+  return url ? <img className="file-thumb" src={url} alt="" /> : <span className="file-kind">IMG</span>;
+}
 
 export function StudyComposer({ topic, description, notes, files, error, busy, suggestions, onTopic, onDescription, onNotes, onFiles, onRemoveFile, onSuggestion, onSubmit }: StudyComposerProps) {
   const [dragging, setDragging] = useState(false);
@@ -35,39 +48,38 @@ export function StudyComposer({ topic, description, notes, files, error, busy, s
     <h2 id="composer-heading" className="sr-only">Start a study session</h2>
     <div className="composer-body">
       <div className="field">
-        <label className="field-label" htmlFor="topic">Topic <span className="optional">optional</span></label>
-        <input id="topic" className="input composer-topic" maxLength={PRACTICE_LIMITS.topic} value={topic} disabled={busy} onChange={(event) => onTopic(event.target.value)} placeholder="e.g. Photosynthesis" autoComplete="off" />
-      </div>
-      <div className="field">
-        <label className="field-label" htmlFor="description">What do you want to explain?</label>
-        <textarea id="description" className="textarea" rows={3} maxLength={PRACTICE_LIMITS.description} value={description} disabled={busy} onChange={(event) => onDescription(event.target.value)}
-          placeholder="e.g. How light energy becomes chemical energy in a leaf" aria-describedby="description-hint" aria-invalid={Boolean(error) && !description.trim()} />
-        <p id="description-hint" className="field-hint">Pick something you’ve already studied. A specific idea works best.</p>
-      </div>
-
-      <div className="field">
-        <span className="field-label" id="materials-label">Study material <span className="optional">optional · PDF, TXT or Markdown · up to {MATERIAL_LIMITS.files} files, {MATERIAL_LIMITS.fileBytes / 1024 / 1024} MB each</span></span>
-        <label htmlFor="files" className={`dropzone ${dragging ? 'is-dragging' : ''} ${dropDisabled ? 'is-disabled' : ''}`}
+        <span className="field-label" id="materials-label">Upload what you’re studying</span>
+        <label htmlFor="files" className={`dropzone dropzone--hero ${dragging ? 'is-dragging' : ''} ${dropDisabled ? 'is-disabled' : ''} ${files.length ? 'has-files' : ''}`}
           onDragEnter={(event) => { event.preventDefault(); if (dropDisabled) return; depth.current += 1; setDragging(true); }}
           onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = dropDisabled ? 'none' : 'copy'; }}
           onDragLeave={() => { depth.current = Math.max(0, depth.current - 1); if (!depth.current) setDragging(false); }}
           onDrop={(event) => { event.preventDefault(); depth.current = 0; setDragging(false); if (!dropDisabled) onFiles(Array.from(event.dataTransfer.files)); }}>
-          <span className="dropzone-icon"><PracticeIcon name="upload" size={18} /></span>
-          <span className="dropzone-copy"><strong>{full ? 'File limit reached' : dragging ? 'Drop to add' : 'Drop files here or browse'}</strong><span>Text is extracted on the server and used only for this session.</span></span>
+          <span className="dropzone-icon"><PracticeIcon name="upload" size={22} /></span>
+          <span className="dropzone-copy"><strong>{full ? 'File limit reached' : dragging ? 'Drop to add' : files.length ? 'Add another file' : 'Drop photos, notes or PDFs here, or browse'}</strong>
+            <span>Photos of notes or textbook pages, screenshots, PDFs, TXT or Markdown. Up to {MATERIAL_LIMITS.files} files, {MATERIAL_LIMITS.fileBytes / 1024 / 1024} MB each.</span></span>
           <input id="files" className="sr-only" type="file" multiple disabled={dropDisabled} aria-labelledby="materials-label" aria-describedby="files-hint"
-            accept={[...MATERIAL_LIMITS.extensions, 'application/pdf', 'text/plain', 'text/markdown'].join(',')}
+            accept={[...MATERIAL_LIMITS.extensions, 'application/pdf', 'text/plain', 'text/markdown', 'image/png', 'image/jpeg', 'image/webp'].join(',')}
             onChange={(event) => { onFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
         </label>
-        <p id="files-hint" className="sr-only">Scanned or image-only PDFs aren’t supported yet.</p>
+        <p id="files-hint" className="field-hint">Text and diagrams are read on the server and used only for this session. Scanned PDFs aren’t supported; photograph or screenshot the pages instead.</p>
         {files.length > 0 && <ul className="file-list" aria-label="Selected files">{files.map((file, index) => <li key={`${file.name}-${index}`} className="enter">
-          <span className="file-kind">{kind(file.name)}</span><span className="file-name">{file.name}</span><span className="file-size">{size(file.size)}</span>
+          {isImage(file) ? <Thumb file={file} /> : <span className="file-kind">{kind(file)}</span>}<span className="file-name">{file.name}</span><span className="file-size">{size(file.size)}</span>
           <button type="button" className="icon-button" disabled={busy} onClick={() => onRemoveFile(index)} aria-label={`Remove ${file.name}`}><PracticeIcon name="close" size={16} /></button>
         </li>)}</ul>}
       </div>
 
-      <details className="composer-notes" open={notes ? true : undefined}>
-        <summary><PracticeIcon name="chevron" size={14} />Add notes <span className="optional">optional</span></summary>
-        <div className="field"><label className="sr-only" htmlFor="notes">Notes to help shape your questions</label>
+      <div className="field">
+        <label className="field-label" htmlFor="description">Anything to add? <span className="optional">optional</span></label>
+        <textarea id="description" className="textarea composer-detail" rows={2} maxLength={PRACTICE_LIMITS.description} value={description} disabled={busy} onChange={(event) => onDescription(event.target.value)}
+          placeholder={files.length ? 'e.g. Focus on chapter 3, or what I found confusing' : 'Or just describe it: how light energy becomes chemical energy in a leaf'} aria-describedby="description-hint" />
+        <p id="description-hint" className="field-hint">{files.length ? 'Your upload is enough on its own. Add a line only if you want to steer the questions.' : 'Without a file, a specific idea you’ve already studied works best.'}</p>
+      </div>
+
+      <details className="composer-notes" open={notes || topic ? true : undefined}>
+        <summary><PracticeIcon name="chevron" size={14} />Title and notes <span className="optional">optional</span></summary>
+        <div className="field"><label className="field-label" htmlFor="topic">Title</label>
+          <input id="topic" className="input" maxLength={PRACTICE_LIMITS.topic} value={topic} disabled={busy} onChange={(event) => onTopic(event.target.value)} placeholder="e.g. Photosynthesis" autoComplete="off" /></div>
+        <div className="field"><label className="field-label" htmlFor="notes">Notes to help shape your questions</label>
           <textarea id="notes" className="textarea" rows={4} maxLength={PRACTICE_LIMITS.notes} value={notes} disabled={busy} onChange={(event) => onNotes(event.target.value)} placeholder="A few key points from class…" /></div>
       </details>
     </div>
@@ -75,8 +87,8 @@ export function StudyComposer({ topic, description, notes, files, error, busy, s
     {error && <p className="form-error composer-error" role="alert"><PracticeIcon name="alert" size={16} />{error}</p>}
 
     <div className="composer-foot">
-      <div className="composer-suggestions"><span>Try</span>{suggestions.map((suggestion) => <button type="button" className="chip" key={suggestion.title} disabled={busy} onClick={() => onSuggestion(suggestion)}>{suggestion.title}</button>)}</div>
-      <Button type="submit" size="lg" disabled={busy}>{busy ? <><span className="spinner" aria-hidden="true" />{files.length ? 'Uploading…' : 'Starting…'}</> : <>Start session<PracticeIcon name="arrow" size={18} /></>}</Button>
+      <div className="composer-suggestions"><span>No material? Try</span>{suggestions.map((suggestion) => <button type="button" className="chip" key={suggestion.title} disabled={busy} onClick={() => onSuggestion(suggestion)}>{suggestion.title}</button>)}</div>
+      <Button type="submit" size="lg" disabled={busy}>{busy ? <><span className="spinner" aria-hidden="true" />{files.some(isImage) ? 'Reading your upload…' : files.length ? 'Uploading…' : 'Starting…'}</> : <>Start session<PracticeIcon name="arrow" size={18} /></>}</Button>
     </div>
   </form>;
 }

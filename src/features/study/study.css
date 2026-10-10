@@ -279,3 +279,15 @@
   .teach-foot { flex-direction: column-reverse; align-items: stretch; gap: var(--s-2); }
   .teach-foot-end .button { width: 100%; white-space: normal; text-align: center; line-height: 1.3; padding-top: 10px; padding-bottom: 10px; }
 }
+
+/* Follow-up notice with "Back to Alex" */
+.recheck-notice { flex-wrap: wrap; align-items: center; }
+.recheck-notice p { flex: 1 1 16rem; }
+.recheck-notice .button { flex: none; }
+
+/* Suggested rewrite of the learner's request (Yes / No) */
+.suggested-prompt { display: grid; gap: var(--s-1); width: 100%; padding: var(--s-4); border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface-sunken); text-align: left; }
+.suggested-prompt p { color: var(--text-strong); }
+.status-card .disclosure { width: 100%; text-align: left; }
+.status-card .disclosure-body { display: grid; gap: var(--s-3); }
+.status-card .disclosure-body .button-row { justify-content: flex-start; }

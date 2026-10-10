@@ -32,7 +32,7 @@ function StatusCard({ title, children, busy = false, tone = 'neutral', icon = 'i
 }
 
 function AssessmentPanel({ session, attempt }: { session: PracticeSession; attempt: AssessmentAttempt }) {
-  const { updateDraft, submitAssessment, busy, setNervousness, draftStatus, saveDraft, storageError, startAttempt } = useSessions();
+  const { updateDraft, submitAssessment, busy, setNervousness, draftStatus, saveDraft, storageError, startAttempt, returnToTeaching } = useSessions();
   const [ratingSkipped, setRatingSkipped] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const index = attempt.currentQuestionIndex;
@@ -57,7 +57,8 @@ function AssessmentPanel({ session, attempt }: { session: PracticeSession; attem
   const showRating = attempt.kind === 'baseline' && !ratingSkipped;
   return <div className={`assess ${showRating ? '' : 'assess--single'}`}>
     <div className="assess-main">
-      {recheck && <div className="notice notice--accent enter"><PracticeIcon name="refresh" size={16} /><p><strong>Follow-up questions.</strong> These are new questions on the same concepts you just taught. Answer from your own understanding.</p></div>}
+      {recheck && <div className="notice notice--accent enter recheck-notice"><PracticeIcon name="refresh" size={16} /><p><strong>Follow-up questions.</strong> These are new questions on the same concepts you just taught. Answer from your own understanding.</p>
+        <Button variant="secondary" size="sm" disabled={busy[session.id] || session.lifecycle !== 'active'} onClick={() => void returnToTeaching(session.id).catch(() => undefined)}><PracticeIcon name="back" size={14} />Back to Alex</Button></div>}
       <QuestionCard question={question} answer={answer} index={index} count={attempt.questions.length} saveState={saveState} disabled={busy[session.id]}
         conceptTitle={session.concepts.find((concept) => concept.id === question.conceptId)?.title}
         submitLabel={recheck ? 'Submit follow-up' : 'Check my answers'}
@@ -253,6 +254,8 @@ function TeachingPanel({ session }: { session: PracticeSession }) {
     : idleEnded ? 'The call ended after two quiet minutes to save voice time. Your transcript is kept; start talking again whenever you’re ready.'
     : voiceEnded ? 'The saved transcript appears below once the voice service has processed it.' : 'Explain the focus concepts out loud. Alex will ask questions when something isn’t clear.';
   const savedConversations = cycle.conversations.some((segment) => segment.id !== liveId);
+  // Set when the learner came back from an unsubmitted follow-up check; their answers are waiting.
+  const followUpWaiting = session.attempts.some((item) => item.id === cycle.recheckAttemptId && !item.submittedAt);
 
   return <>
     <div className="teach">
@@ -318,7 +321,7 @@ function TeachingPanel({ session }: { session: PracticeSession }) {
       <Button variant="quiet" onClick={() => void exit()} disabled={busy[session.id]}>Save &amp; exit</Button>
       <div className="teach-foot-end">
         <span className="teach-foot-hint">{hasConversation ? 'Done explaining? Three new questions are next.' : 'Teach Alex first, then answer three new questions.'}</span>
-        <Button onClick={() => void next()} disabled={busy[session.id] || session.lifecycle !== 'active'}>{mock && !hasConversation ? 'DEV MOCK: skip teaching (test only)' : 'I’m ready for the follow-up questions'}<PracticeIcon name="arrow" size={16} /></Button>
+        <Button onClick={() => void next()} disabled={busy[session.id] || session.lifecycle !== 'active'}>{mock && !hasConversation ? 'DEV MOCK: skip teaching (test only)' : followUpWaiting ? 'Continue the follow-up questions' : 'I’m ready for the follow-up questions'}<PracticeIcon name="arrow" size={16} /></Button>
       </div>
     </div>
   </>;
@@ -383,21 +386,36 @@ function StudyContent({ sessionId }: { sessionId: string }) {
   const fresh = session.stage === 'baseline' && attempt && attempt.currentQuestionIndex === 0 && attempt.answers.every((answer) => !answer.text && !answer.working && !answer.skipped);
   const heading = HEADINGS[session.stage];
   const showOverview = fresh && !overviewDone && session.lifecycle !== 'paused';
+  const focusField = <>
+    <div className="field status-card-field"><label className="field-label" htmlFor="clarification">Your focus</label><textarea id="clarification" className="textarea" value={clarification} maxLength={PRACTICE_LIMITS.description} onChange={(event) => setClarification(event.target.value)} rows={3} /></div>
+    <div className="button-row"><Button disabled={!clarification.trim()} onClick={() => void prepareSession(sessionId, clarification).catch(() => undefined)}>Continue</Button></div>
+  </>;
   return <div className={`study study--${session.stage}`}>
     <header className="study-head">
-      <div><span className="eyebrow">{heading.eyebrow}</span><h1 tabIndex={-1}>{showOverview ? 'Here’s what we’ll practise' : heading.title(session)}</h1>{session.stage !== 'teaching' && !showOverview && <p className="muted">{session.stage === 'preparing' ? session.description : session.title}</p>}</div>
+      <div><span className="eyebrow">{heading.eyebrow}</span><h1 tabIndex={-1}>{showOverview ? 'Here’s what we’ll practise' : heading.title(session)}</h1>{session.stage !== 'teaching' && !showOverview && <p className="muted">{session.stage === 'preparing' ? session.description || 'Reading your study material' : session.title}</p>}</div>
       {session.stage !== 'teaching' && <Button variant="secondary" size="sm" onClick={() => void exit()} disabled={busy[sessionId]}>Save &amp; exit</Button>}
     </header>
     {session.lifecycle === 'paused' ? <StatusCard title="Your session is paused" icon="pause"><p className="muted">Everything you’ve written is saved. Pick up right where you left off.</p><Button disabled={busy[sessionId]} onClick={() => void resumeSession(sessionId).catch(() => undefined)}>Continue session<PracticeIcon name="arrow" size={16} /></Button></StatusCard> :
       preparing ? (busy[sessionId] ? <StatusCard busy title={session.materials?.length ? `Reading ${session.materials.length === 1 ? 'your file' : 'your files'}…` : 'Preparing your questions…'}><p className="muted">Finding three core concepts and writing a short check for each.</p></StatusCard>
         : <section className="status-card card enter" aria-live="polite">
-          {session.preparation.clarificationQuestion ? <>
+          {session.preparation.status === 'clarification' && session.preparation.clarificationQuestion ? <>
             <span className="status-card-icon"><PracticeIcon name="message" /></span>
             <h2>{session.preparation.clarificationQuestion}</h2>
-            <div className="field status-card-field"><label className="field-label" htmlFor="clarification">Your focus</label><textarea id="clarification" className="textarea" value={clarification} maxLength={PRACTICE_LIMITS.description} onChange={(event) => setClarification(event.target.value)} rows={3} /></div>
-          </> : <><span className="status-card-icon"><PracticeIcon name={error ? 'alert' : 'sparkle'} /></span><h2>{error ? 'Preparation didn’t finish' : 'Ready to prepare'}</h2></>}
-          <div className="button-row"><Button disabled={session.preparation.status === 'clarification' && !clarification.trim()} onClick={() => void prepareSession(sessionId, clarification || undefined).catch(() => undefined)}>{session.preparation.status === 'clarification' ? 'Continue' : 'Try preparing again'}</Button>
-            <Button variant="secondary" onClick={() => void loadSession(sessionId).catch(() => undefined)}><PracticeIcon name="refresh" size={16} />Refresh status</Button></div>
+            {session.preparation.suggestedPrompt && <>
+              <div className="suggested-prompt"><span className="eyebrow">Suggested focus</span><p>{session.preparation.suggestedPrompt}</p></div>
+              <p className="field-label" id="suggestion-question">Use this suggestion?</p>
+              <div className="button-row" role="group" aria-labelledby="suggestion-question">
+                <Button onClick={() => void prepareSession(sessionId, undefined, 'accept').catch(() => undefined)}>Yes, use it</Button>
+                <Button variant="secondary" onClick={() => void prepareSession(sessionId, undefined, 'decline').catch(() => undefined)}>No, keep my original</Button>
+              </div>
+            </>}
+            {session.preparation.suggestedPrompt ? <details className="disclosure"><summary>Write my own focus instead<PracticeIcon name="chevron" size={14} /></summary><div className="disclosure-body">{focusField}</div></details> : <>
+              {focusField}
+              <div className="button-row"><Button variant="secondary" onClick={() => void prepareSession(sessionId, undefined, 'decline').catch(() => undefined)}>No, keep my original</Button></div>
+            </>}
+          </> : <><span className="status-card-icon"><PracticeIcon name={error ? 'alert' : 'sparkle'} /></span><h2>{error ? 'Preparation didn’t finish' : 'Ready to prepare'}</h2>
+            <div className="button-row"><Button onClick={() => void prepareSession(sessionId).catch(() => undefined)}>Try preparing again</Button>
+              <Button variant="secondary" onClick={() => void loadSession(sessionId).catch(() => undefined)}><PracticeIcon name="refresh" size={16} />Refresh status</Button></div></>}
         </section>) :
       showOverview ? <Overview session={session} onBegin={() => setOverviewDone(true)} /> :
       session.stage === 'baseline' || session.stage === 'recheck' ? attempt && <AssessmentPanel session={session} attempt={attempt} /> :

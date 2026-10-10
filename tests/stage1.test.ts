@@ -156,6 +156,52 @@ test('interrupted preparation and grading requests can be reconciled by refreshi
   assert.ok(graded.attempts[0].grade);
 });
 
+test('declining a suggested rewrite (No) keeps the original request and continues', async (context) => {
+  const declined = await harness(context, 'clarification');
+  const pending = await declined.call(`${declined.path}/prepare`);
+  assert.equal(pending.preparation.status, 'clarification');
+  assert.ok(pending.preparation.suggestedPrompt?.includes('DEV MOCK'));
+  const kept = await declined.call(`${declined.path}/prepare`, 'POST', { keepOriginal: true });
+  assert.equal(kept.stage, 'baseline', 'No continues without forcing a rewrite');
+  assert.equal(kept.description, 'Learner topic');
+});
+
+test('accepting a suggested rewrite (Yes) adopts it as the request', async (context) => {
+  const accepted = await harness(context, 'clarification');
+  const suggested = await accepted.call(`${accepted.path}/prepare`);
+  const ready = await accepted.call(`${accepted.path}/prepare`, 'POST', { acceptSuggestion: true });
+  assert.equal(ready.stage, 'baseline');
+  assert.equal(ready.description, suggested.preparation.suggestedPrompt, 'Yes adopts the server-stored suggestion');
+});
+
+test('Back to Alex leaves the follow-up check and returns to the same attempt without grading', async (context) => {
+  const api = await harness(context);
+  const prepared = await api.call(`${api.path}/prepare`);
+  const baseline = prepared.attempts[0];
+  await api.call<ApiResponse>(`${api.path}/teach`, 'POST', {}, 400);
+  await api.call(api.path, 'PATCH', { attemptId: baseline.id, answers: baseline.answers.map((answer) => ({ ...answer, text: '1' })) });
+  await api.call(`${api.path}/submit`, 'POST', { attemptId: baseline.id });
+  const recheck = await api.call(`${api.path}/recheck`);
+  const attempt = recheck.attempts[1];
+  const answers = attempt.answers.map((answer, index) => ({ ...answer, text: index === 0 ? 'draft answer' : '' }));
+  await api.call(api.path, 'PATCH', { attemptId: attempt.id, answers, currentQuestionIndex: 1 });
+
+  const teaching = await api.call(`${api.path}/teach`);
+  assert.equal(teaching.stage, 'teaching');
+  await api.call<ApiResponse>(api.path, 'PATCH', { attemptId: attempt.id, answers }, 409);
+  const resumed = await api.call(`${api.path}/recheck`);
+  assert.equal(resumed.stage, 'recheck');
+  assert.equal(resumed.attempts.length, 2, 'No new follow-up attempt is created');
+  assert.equal(resumed.attempts[1].id, attempt.id);
+  assert.equal(resumed.attempts[1].answers[0].text, 'draft answer');
+  assert.equal(resumed.attempts[1].currentQuestionIndex, 1);
+  assert.equal(api.batches(), 1, 'Only the baseline was graded');
+
+  await api.call(api.path, 'PATCH', { attemptId: attempt.id, answers: answers.map((answer, index) => ({ ...answer, skipped: index > 0 })) });
+  await api.call(`${api.path}/submit`, 'POST', { attemptId: attempt.id });
+  await api.call<ApiResponse>(`${api.path}/teach`, 'POST', {}, 400);
+});
+
 test('DEV MOCK full cycle: baseline, teaching bypass, matched recheck, grading, results and finish', async (context) => {
   const api = await harness(context);
   const prepared = await api.call(`${api.path}/prepare`);

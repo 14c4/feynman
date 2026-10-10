@@ -85,3 +85,14 @@
   .session-score { grid-column: 3; grid-row: 2; min-width: 0; }
   .session-open { grid-column: 3; grid-row: 1; }
 }
+
+/* Upload-first composer */
+.dropzone--hero { flex-direction: column; justify-content: center; min-height: 180px; padding: var(--s-8) var(--s-6); text-align: center; border-width: 2px; }
+.dropzone--hero.has-files { min-height: 0; padding: var(--s-5) var(--s-6); }
+.dropzone--hero .dropzone-icon { width: 48px; height: 48px; border-radius: var(--r-lg); }
+.dropzone--hero .dropzone-copy { justify-items: center; }
+.dropzone--hero .dropzone-copy strong { font-size: var(--text-lg); }
+.dropzone--hero .dropzone-copy span { max-width: 44ch; font-size: var(--text-sm); color: var(--muted); }
+.composer-detail { min-height: 0; font-size: var(--text-sm); }
+.file-thumb { width: 36px; height: 36px; object-fit: cover; border-radius: var(--r-sm); border: 1px solid var(--line); flex-shrink: 0; }
+.composer-notes[open] > .field + .field { margin-top: var(--s-3); }

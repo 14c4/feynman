@@ -47,11 +47,11 @@ export function HomePage() {
   async function start(event: FormEvent) {
     event.preventDefault();
     if (starting.current) return;
-    if (!description.trim()) { setError('Describe what you want to explain to get started.'); document.getElementById('description')?.focus(); return; }
+    if (!description.trim() && !notes.trim() && !files.length) { setError('Upload what you’re studying, or describe what you want to explain.'); document.getElementById('files')?.focus(); return; }
     starting.current = true; setSaving(true); setError('');
     try {
       const materials: MaterialUpload[] = await Promise.all(files.map(async (file) => ({ name: file.name, data: await readBase64(file) })));
-      const id = await createSession({ topic: topic.trim() || undefined, description: description.trim(), notes: notes.trim(), materials: materials.length ? materials : undefined });
+      const id = await createSession({ topic: topic.trim() || undefined, description: description.trim() || undefined, notes: notes.trim(), materials: materials.length ? materials : undefined });
       await navigate(`/study/${id}`);
     }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not start this practice session.'); }
@@ -71,7 +71,7 @@ export function HomePage() {
     const next = [...files];
     for (const file of chosen) {
       const extension = file.name.toLowerCase().match(/\.[a-z]+$/)?.[0] ?? '';
-      if (!(MATERIAL_LIMITS.extensions as readonly string[]).includes(extension)) { setError(`“${file.name}” is not supported. Upload a PDF, TXT, or Markdown (.md) file.`); return; }
+      if (!(MATERIAL_LIMITS.extensions as readonly string[]).includes(extension)) { setError(`“${file.name}” is not supported. Upload a photo (PNG, JPEG, WebP), PDF, TXT, or Markdown (.md) file.`); return; }
       if (!file.size) { setError(`“${file.name}” is empty.`); return; }
       if (file.size > MATERIAL_LIMITS.fileBytes) { setError(`“${file.name}” is larger than ${MATERIAL_LIMITS.fileBytes / 1024 / 1024} MB.`); return; }
       if (!next.some((item) => item.name === file.name && item.size === file.size)) next.push(file);

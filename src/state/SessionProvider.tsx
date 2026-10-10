@@ -96,7 +96,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, [receive, tokenFor]);
   const loadSession = useCallback((id: string) => run(id, async () => receive(await practiceApi.load(id, tokenFor(id)))), [receive, run, tokenFor]);
-  const action = useCallback((id: string, name: 'prepare' | 'submit' | 'pause' | 'resume' | 'recheck' | 'cycles' | 'finish', input?: Record<string, string>) => {
+  const action = useCallback((id: string, name: 'prepare' | 'submit' | 'pause' | 'resume' | 'recheck' | 'teach' | 'cycles' | 'finish', input?: Record<string, string | boolean>) => {
     const key = `${id}:${name}`;
     const pending = pendingActions.current[key];
     if (pending) return pending;
@@ -106,7 +106,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     void operation.then(clear, clear);
     return operation;
   }, [flush, receive, run, tokenFor]);
-  const prepareSession = useCallback((id: string, clarification?: string) => action(id, 'prepare', clarification ? { clarification } : {}), [action]);
+  const prepareSession = useCallback((id: string, clarification?: string, suggestion?: 'accept' | 'decline') => action(id, 'prepare',
+    suggestion === 'accept' ? { acceptSuggestion: true } : suggestion === 'decline' ? { keepOriginal: true } : clarification ? { clarification } : {}), [action]);
   const createSession = useCallback(async (input: CreatePracticeInput) => {
     const access = await practiceApi.create(input);
     tokens.current[access.session.id] = access.token;
@@ -129,6 +130,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const saveAndExit = useCallback((id: string) => action(id, 'pause'), [action]);
   const resumeSession = useCallback((id: string) => action(id, 'resume'), [action]);
   const startRecheck = useCallback((id: string) => action(id, 'recheck'), [action]);
+  const returnToTeaching = useCallback((id: string) => action(id, 'teach'), [action]);
   const practiceAgain = useCallback((id: string) => action(id, 'cycles'), [action]);
   const finishSession = useCallback((id: string) => action(id, 'finish'), [action]);
   const setNervousness = useCallback((id: string, when: 'before' | 'after', value: NervousnessValue | null) => run(id, async () => {
@@ -195,6 +197,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return () => { window.removeEventListener('beforeunload', warnUnsaved); Object.values(activeTimers).forEach(clearTimeout); };
   }, [persist]);
   return <SessionContext.Provider value={{ ...state, storageError, providerMode, integration, draftStatus, saveDraft, createSession, loadSession, prepareSession, updateDraft,
-    submitAssessment, saveAndExit, resumeSession, startRecheck, practiceAgain, finishSession, setNervousness,
+    submitAssessment, saveAndExit, resumeSession, startRecheck, returnToTeaching, practiceAgain, finishSession, setNervousness,
     requestVoice, registerConversation, finalizeConversation, removeSessions, startTextConversation, sendTextMessage, startAttempt, startMonitoring, sendFrames, stopMonitoring }}>{children}</SessionContext.Provider>;
 }

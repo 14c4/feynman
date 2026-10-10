@@ -123,12 +123,15 @@ export function createPracticeHandler(options: HandlerOptions = {}) {
       const body = req.method === 'GET' || framesRequest ? {} : await readBody(req, req.method === 'POST' && path === '/api/sessions' ? 12_000_000 : 100_000);
       if (req.method === 'POST' && path === '/api/sessions') {
         const description = body.description; const notes = body.notes ?? ''; const topic = body.topic ?? '';
-        if (typeof description !== 'string' || !description.trim() || description.length > PRACTICE_LIMITS.description || typeof notes !== 'string' || notes.length > PRACTICE_LIMITS.notes || typeof topic !== 'string' || topic.length > PRACTICE_LIMITS.topic) { json(res, 400, { error: { code: 'INVALID_INPUT', message: 'Provide a description and valid notes within the permitted limits.' } }); return; }
-        // Extraction happens before anything is stored, so a rejected file creates no session.
-        const materials = await extractMaterials(body.materials);
+        // The description is optional: study material or notes are enough to start.
+        const described = description === undefined ? '' : description;
+        if (typeof described !== 'string' || described.length > PRACTICE_LIMITS.description || typeof notes !== 'string' || notes.length > PRACTICE_LIMITS.notes || typeof topic !== 'string' || topic.length > PRACTICE_LIMITS.topic) { json(res, 400, { error: { code: 'INVALID_INPUT', message: 'Provide valid details within the permitted limits.' } }); return; }
+        if (!described.trim() && !notes.trim() && !(Array.isArray(body.materials) && body.materials.length)) { json(res, 400, { error: { code: 'INVALID_INPUT', message: 'Upload study material or describe what you want to explain.' } }); return; }
+        // Extraction (and reading any images) happens before anything is stored, so a rejected file creates no session.
+        const materials = await extractMaterials(body.materials, providers.transcribeImage?.bind(providers));
         const token = randomBytes(32).toString('base64url'); const timestamp = now(); const id = randomUUID();
         const cycle: PracticeCycle = { id: randomUUID(), number: 1, focusConceptIds: [], conversations: [], createdAt: timestamp };
-        const session: PracticeSession = { id, events: [], providerMode: providers.mode ?? 'real', title: (topic.trim() || description.trim()).slice(0, 100), description: description.trim(), notes, scope: '', materials: materials.map((item) => item.meta), concepts: [], blueprintVersion: 1, stage: 'preparing', lifecycle: 'active', preparation: { status: 'idle' }, attempts: [], cycles: [cycle], currentCycleId: cycle.id, createdAt: timestamp, updatedAt: timestamp };
+        const session: PracticeSession = { id, events: [], providerMode: providers.mode ?? 'real', title: (topic.trim() || described.trim() || materials[0]?.meta.name.replace(/\.[^.]+$/, '') || 'Study session').slice(0, 100), description: described.trim(), notes, scope: '', materials: materials.map((item) => item.meta), concepts: [], blueprintVersion: 1, stage: 'preparing', lifecycle: 'active', preparation: { status: 'idle' }, attempts: [], cycles: [cycle], currentCycleId: cycle.id, createdAt: timestamp, updatedAt: timestamp };
         const record: StoredRecord = { session, tokenHash: hash(token), blueprint: null, conversationOwners: {}, topic: topic.trim() || undefined, materials: materials.map(({ meta, text }) => ({ id: meta.id, name: meta.name, text })) };
         logEvent(session, 'session_created', {}, timestamp);
         await store.set(record); json(res, 201, { session: view(record), token }); return;
@@ -181,13 +184,18 @@ export function createPracticeHandler(options: HandlerOptions = {}) {
         let release!: () => void;
         const running = new Promise<void>((resolve) => { release = resolve; });
         inflight.set(`prepare:${session.id}`, running);
+        const previous = session.preparation;
         session.preparation = { status: 'pending' }; await save();
         try {
            const clarification = body.clarification;
            if (clarification !== undefined && (typeof clarification !== 'string' || clarification.length > PRACTICE_LIMITS.description)) throw new PracticeError('Keep your clarification within 1,200 characters.');
-           const request = record.topic ? `Topic: ${record.topic}\nWhat I want to learn: ${session.description}` : session.description;
-           const output = await providers.generate(request, session.notes, typeof clarification === 'string' ? clarification : undefined, materialExcerpt(record.materials, EXCERPT_CHARACTERS.preparation) || undefined);
-           if (output.kind === 'clarification') { session.preparation = { status: 'clarification', clarificationQuestion: output.question }; await save(); json(res, 200, view(record)); return; }
+           // Yes / No on a suggested rewrite: "Yes" adopts the server's own stored suggestion as the request; "No" keeps the original wording.
+           const accept = body.acceptSuggestion === true; const keepOriginal = body.keepOriginal === true;
+           if (accept) { if (!previous.suggestedPrompt) throw new PracticeError('There is no suggestion to accept. Continue with your own wording.'); session.description = previous.suggestedPrompt; }
+           const focus = session.description || 'Practise the key ideas in the study material and notes I provided.';
+           const request = record.topic ? `Topic: ${record.topic}\nWhat I want to learn: ${focus}` : focus;
+           const output = await providers.generate(request, session.notes, typeof clarification === 'string' && !keepOriginal ? clarification : undefined, materialExcerpt(record.materials, EXCERPT_CHARACTERS.preparation) || undefined, keepOriginal || accept);
+           if (output.kind === 'clarification') { session.preparation = { status: 'clarification', clarificationQuestion: output.question, ...(output.suggestion ? { suggestedPrompt: output.suggestion } : {}) }; await save(); json(res, 200, view(record)); return; }
            const generated = output.concepts;
            const baseline = makeQuestions(generated, 'baseline'); const reserved = makeQuestions(generated, 'recheck');
            const blueprint: PrivateBlueprint = { concepts: generated.map(({ id, title, description, rubric }) => ({ id, title, description, rubric })), baseline, reserved, questions: Object.fromEntries([...baseline, ...reserved].map((question) => [question.id, question])), version: 1 };
@@ -211,9 +219,19 @@ export function createPracticeHandler(options: HandlerOptions = {}) {
         const blueprint = record.blueprint as PrivateBlueprint; const cycle = session.cycles.find((item) => item.id === session.currentCycleId); if (!cycle) throw new Error('Practice cycle not found.');
          const questions = blueprint.reserved;
         for (const segment of cycle.conversations) if (segment.channel === 'text' && !segment.endedAt) endText(segment);
+        // Returning from "Back to Alex" resumes the same follow-up attempt with its saved answers.
+        const existing = session.attempts.find((item) => item.id === cycle.recheckAttemptId && !item.submittedAt && !item.grade);
+        if (existing) { session.stage = 'recheck'; await save(); json(res, 200, view(record)); return; }
         const recheck = newAttempt('recheck', cycle.id, questions, blueprint.version); session.attempts.push(recheck); cycle.recheckAttemptId = recheck.id; session.stage = 'recheck';
         // Follow-up questions appear immediately, so the attempt starts now.
         startAttempt(session, recheck); await save(); json(res, 200, view(record)); return;
+      }
+      if (req.method === 'POST' && suffix === '/teach') {
+        // "Back to Alex" from the follow-up check. Answers stay on the unsubmitted attempt; nothing is graded.
+        if (session.stage !== 'recheck' || session.lifecycle !== 'active') throw new Error('Returning to Alex is available during the follow-up check.');
+        const recheck = session.attempts.find((item) => item.kind === 'recheck' && item.cycleId === session.currentCycleId);
+        if (recheck?.submittedAt || recheck?.grade) throw new Error('The follow-up check was already submitted.');
+        session.stage = 'teaching'; await save(); json(res, 200, view(record)); return;
       }
       if (req.method === 'POST' && suffix === '/cycles') throw new PracticeError('Additional cycles are deferred for this demo. Start a new practice from Home.', 501, 'DEFERRED');
       if (req.method === 'POST' && suffix === '/finish') { if (session.stage !== 'results') throw new Error('Finish is available after results.'); session.lifecycle = 'completed'; session.completedAt = now(); logEvent(session, 'session_finished', {}, session.completedAt); await save(); json(res, 200, view(record)); return; }
