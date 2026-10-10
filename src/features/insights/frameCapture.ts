@@ -1,11 +1,13 @@
-import { FpsMeter, measureFps, processingSize, rgbaToRgb } from './cameraPipeline';
+import { FpsMeter, JPEG_QUALITY, measureFps, processingSize, rgbaToRgb, type EncodedFrame, type FrameEncoding } from './cameraPipeline';
 
 /*
  * Browser-only camera reading. Like Presage's own renderer, every real frame is read once via
  * MediaStreamTrackProcessor with its capture timestamp; requestVideoFrameCallback is the fallback
  * (it pauses while the page is hidden, so background tabs stop sending frames on those browsers).
  */
-export interface CapturedFrame { timestampUs: number; width: number; height: number; rgb: Uint8Array }
+export type CapturedFrame = EncodedFrame;
+/** JPEG encodes allowed in flight before new frames are dropped (and counted) instead of piling up. */
+const MAX_PENDING_ENCODES = 4;
 
 type Processor = new (init: { track: MediaStreamTrack }) => { readable: ReadableStream<VideoFrame> };
 type FrameCallbackVideo = HTMLVideoElement & { requestVideoFrameCallback?: (callback: (now: number, metadata: { captureTime?: number; mediaTime: number }) => void) => number; cancelVideoFrameCallback?: (handle: number) => void };
@@ -20,6 +22,11 @@ export class FrameCapture {
   readonly processed = new FpsMeter();
   /** Frames dropped because their capture time was not newer than the previous frame. */
   duplicates = 0;
+  /** Frames dropped because JPEG encoding fell behind the camera. */
+  encoderDrops = 0;
+  encoding: FrameEncoding = 'rgb';
+  private pending = 0;
+  private chain: Promise<void> = Promise.resolve();
   method: 'track-processor' | 'video-frame-callback' = 'video-frame-callback';
   private active = false;
   private canvas: OffscreenCanvas | HTMLCanvasElement;
@@ -90,9 +97,27 @@ export class FrameCapture {
     const { width, height } = processingSize(sourceWidth, sourceHeight, this.longSide);
     if (this.canvas.width !== width || this.canvas.height !== height) { this.canvas.width = width; this.canvas.height = height; }
     this.context.drawImage(source, 0, 0, sourceWidth, sourceHeight, 0, 0, width, height);
-    const rgba = this.context.getImageData(0, 0, width, height).data;
-    this.processed.push(timestampUs / 1000);
-    this.onFrame({ timestampUs, width, height, rgb: rgbaToRgb(rgba, new Uint8Array(width * height * 3)) });
+    if (this.encoding === 'rgb') {
+      const rgba = this.context.getImageData(0, 0, width, height).data;
+      this.processed.push(timestampUs / 1000);
+      this.onFrame({ timestampUs, width, height, encoding: 'rgb', bytes: rgbaToRgb(rgba, new Uint8Array(width * height * 3)) });
+      return;
+    }
+    if (this.pending >= MAX_PENDING_ENCODES) { this.encoderDrops++; return; }
+    // The blob request snapshots the canvas now; the chain delivers frames in capture order.
+    const canvas = this.canvas;
+    const blob = 'convertToBlob' in canvas ? canvas.convertToBlob({ type: 'image/jpeg', quality: JPEG_QUALITY })
+      : new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY));
+    this.pending++;
+    this.chain = this.chain.then(async () => {
+      try {
+        const result = await blob;
+        if (!result || !this.active) return;
+        const bytes = new Uint8Array(await result.arrayBuffer());
+        this.processed.push(timestampUs / 1000);
+        this.onFrame({ timestampUs, width, height, encoding: 'jpeg', bytes });
+      } catch { this.encoderDrops++; } finally { this.pending--; }
+    });
   }
 }
 

@@ -246,7 +246,7 @@ export function createPracticeHandler(options: HandlerOptions = {}) {
           if (session.lifecycle === 'completed') throw new PracticeError('This practice session is finished.', 409, 'INVALID_STAGE');
           await monitoring.start(session.id, body.purpose); json(res, 200, view(record)); return;
         }
-        if (operation === 'frames') { json(res, 200, monitoring.ingest(session.id, windowId, frames ?? Buffer.alloc(0), Number(url.searchParams.get('w')), Number(url.searchParams.get('h')), url.searchParams.has('cfps') ? Number(url.searchParams.get('cfps')) : undefined)); return; }
+        if (operation === 'frames') { json(res, 200, monitoring.ingest(session.id, windowId, frames ?? Buffer.alloc(0), Number(url.searchParams.get('w')), Number(url.searchParams.get('h')), url.searchParams.has('cfps') ? Number(url.searchParams.get('cfps')) : undefined, url.searchParams.get('enc') === 'jpeg' ? 'jpeg' : 'rgb')); return; }
         json(res, 200, { status: await monitoring.stop(session.id, windowId, body.reason), session: view(record) }); return;
       }
       const conversation = suffix.match(/^\/conversations(?:\/([A-Za-z0-9_-]{1,128})(?:\/(finalize|messages))?)?$/);

@@ -1,6 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { SessionState } from './sessionReducer';
-import type { AssessmentAnswer, CreatePracticeInput, IntegrationHealth, MonitoringPurpose, MonitoringStatus, NervousnessValue, VoiceCredentials } from '../../shared/types';
+import type { AssessmentAnswer, CreatePracticeInput, FrameEncoding, IntegrationHealth, MonitoringPurpose, MonitoringStatus, NervousnessValue, VoiceCredentials } from '../../shared/types';
 
 export interface SessionContextValue extends SessionState {
   storageError?: string;
@@ -34,7 +34,7 @@ export interface SessionContextValue extends SessionState {
   startAttempt: (id: string, attemptId: string) => Promise<void>;
   /** Optional camera monitoring. Returns the new window's id. */
   startMonitoring: (id: string, purpose: MonitoringPurpose) => Promise<string>;
-  sendFrames: (id: string, windowId: string, frames: Uint8Array, width: number, height: number, captureFps?: number) => Promise<MonitoringStatus>;
+  sendFrames: (id: string, windowId: string, frames: Uint8Array, width: number, height: number, captureFps?: number, encoding?: FrameEncoding) => Promise<MonitoringStatus>;
   stopMonitoring: (id: string, windowId: string, reason?: 'camera_too_slow') => Promise<MonitoringStatus>;
 }
 

@@ -18,7 +18,7 @@ export const TARGET_FPS = 24;
  * camera is tried, and Presage's own FRAME_RATE_TOO_LOW validation decides whether it is usable.
  */
 export const MIN_FPS = 12;
-/** Processing frames are downscaled so their long side is at most this many pixels. */
+/** Processing frames are downscaled so their long side is at most this many pixels (see PROCESSING_STEPS). */
 export const PROCESSING_LONG_SIDES = [480, 400, 320] as const;
 /** Frames queued in the browser beyond this age are dropped (and counted) instead of sent late. */
 export const MAX_QUEUE_MS = 1500;
@@ -162,4 +162,54 @@ export class RecoveryController {
     this.settleUntil = now + 8000; this.lowCaptureSince = undefined; this.lowDeliverySince = undefined; this.tooLowSince = undefined;
     return action;
   }
+}
+
+/**
+ * Processing steps, best fidelity first. Raw RGB is lossless but heavy (~15 MB/s at 480 px and
+ * 30 fps), so it is only the starting point when the server runs on this machine; a remote server
+ * starts with high-quality JPEG. When frames are lost after capture, recovery moves one step down.
+ */
+export type FrameEncoding = 'rgb' | 'jpeg';
+export interface ProcessingStep { encoding: FrameEncoding; longSide: number }
+export const PROCESSING_STEPS: ProcessingStep[] = [
+  { encoding: 'rgb', longSide: 480 },
+  { encoding: 'jpeg', longSide: 480 },
+  { encoding: 'jpeg', longSide: 400 },
+  { encoding: 'jpeg', longSide: 320 },
+];
+export const JPEG_QUALITY = 0.9;
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+export function initialProcessingStep(hostname: string) { return LOCAL_HOSTS.has(hostname) ? 0 : 1; }
+
+/** A frame ready to upload: packed RGB, or JPEG bytes. */
+export interface EncodedFrame { timestampUs: number; width: number; height: number; encoding: FrameEncoding; bytes: Uint8Array }
+
+/** How many leading frames share the first frame's encoding and size and fit one request. */
+export function batchLength(queue: EncodedFrame[], maxFrames = MAX_BATCH_FRAMES, maxBytes = MAX_BATCH_BYTES) {
+  const first = queue[0];
+  if (!first) return 0;
+  let count = 0; let bytes = 0;
+  for (const frame of queue) {
+    if (frame.encoding !== first.encoding || frame.width !== first.width || frame.height !== first.height) break;
+    const size = frame.bytes.length + (frame.encoding === 'jpeg' ? 12 : 8);
+    if (count && (count >= maxFrames || bytes + size > maxBytes)) break;
+    count++; bytes += size;
+  }
+  return count;
+}
+
+/** Wire format: rgb = [f64 LE timestamp µs][RGB]; jpeg = [f64 LE timestamp µs][u32 LE length][JPEG]. */
+export function packBatch(frames: EncodedFrame[]): Uint8Array {
+  const jpeg = frames[0]?.encoding === 'jpeg';
+  const header = jpeg ? 12 : 8;
+  const body = new Uint8Array(frames.reduce((sum, frame) => sum + header + frame.bytes.length, 0));
+  const view = new DataView(body.buffer);
+  let offset = 0;
+  for (const frame of frames) {
+    view.setFloat64(offset, frame.timestampUs, true);
+    if (jpeg) view.setUint32(offset + 8, frame.bytes.length, true);
+    body.set(frame.bytes, offset + header);
+    offset += header + frame.bytes.length;
+  }
+  return body;
 }

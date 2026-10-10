@@ -8,7 +8,7 @@ import { ConversationList } from '../study/ConversationStatus';
 import type { AssessmentGrade, QuestionGrade } from '../../../shared/types';
 import { CONFIDENCE_LABELS } from '../../../shared/insights';
 import { ReadinessInsights } from '../insights/ReadinessInsights';
-import { MonitorPrompt } from '../insights/MonitorDock';
+import { PresagePanel } from '../insights/PresagePanel';
 import '../study/study.css';
 import './feedback.css';
 
@@ -106,7 +106,7 @@ export function ResultsPage() {
         : session.nervousnessAfter === undefined && <p className="muted small">After: not recorded</p>}
     </section>
 
-    <MonitorPrompt session={session} />
+    <PresagePanel session={session} layout="inline" />
 
     {(errors[sessionId] || session.operationError) && <p className="notice notice--danger" role="alert"><PracticeIcon name="alert" size={16} />{errors[sessionId] || session.operationError}</p>}
     <div className="results-actions">

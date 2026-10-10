@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode } from 'react';
-import type { AssessmentAnswer, CreatePracticeInput, IntegrationHealth, MonitoringPurpose, NervousnessValue, PracticeSession, UpdatePracticeInput } from '../../shared/types';
+import type { AssessmentAnswer, CreatePracticeInput, FrameEncoding, IntegrationHealth, MonitoringPurpose, NervousnessValue, PracticeSession, UpdatePracticeInput } from '../../shared/types';
 import { loadIntegrationHealth, PracticeApiError, practiceApi } from '../services/practiceApi';
 import { SessionContext } from './useSessions';
 import { initialSessionState, sessionReducer, type SessionAction, type SessionState } from './sessionReducer';
@@ -162,7 +162,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     if (!window) throw new Error('Monitoring did not start. Please try again.');
     return window.id;
   }, [receive, tokenFor]);
-  const sendFrames = useCallback((id: string, windowId: string, frames: Uint8Array, width: number, height: number, captureFps?: number) => practiceApi.sendFrames(id, tokenFor(id), windowId, frames, width, height, captureFps), [tokenFor]);
+  const sendFrames = useCallback((id: string, windowId: string, frames: Uint8Array, width: number, height: number, captureFps?: number, encoding?: FrameEncoding) => practiceApi.sendFrames(id, tokenFor(id), windowId, frames, width, height, captureFps, encoding), [tokenFor]);
   const stopMonitoring = useCallback(async (id: string, windowId: string, reason?: 'camera_too_slow') => {
     const { status, session } = await practiceApi.stopMonitoring(id, tokenFor(id), windowId, reason);
     receive(session);

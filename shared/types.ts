@@ -360,7 +360,39 @@ export interface MonitoringStatus {
   code?: string;
   latest: { pulse?: PhysiologySample; breathing?: PhysiologySample };
   pipeline?: PipelineStats;
+  /** Measurement clock: ms since the first frame reached Presage (or the simulated window began). Warm-ups count from here. */
+  elapsedMs?: number;
+  /** Live Presage SDK state for this window. Absent for simulated windows. Never stored with the session. */
+  presage?: PresageLiveState;
 }
+
+export type PresageProcessing = 'uninitialized' | 'idle' | 'starting' | 'running' | 'stopping' | 'error';
+
+/** What the SmartSpectra SDK itself is reporting right now. */
+export interface PresageLiveState {
+  processing?: PresageProcessing;
+  /** Metrics packets delivered by the SDK in this window (0 means no analysis output yet). */
+  metricsPackets: number;
+  /** Face analysis from Presage's face metrics, when the API key includes them. */
+  face?: PresageFace;
+  /** Latest heart-rate variability estimate, when the SDK provides one. */
+  hrv?: { rmssdMs: number; confidence: number; valid: boolean; at: string };
+}
+
+export interface PresageFace {
+  at: string;
+  /** Face bounds normalized to the frame Presage received (0–1, unmirrored). Omitted when coordinates can't be placed. */
+  box?: { x: number; y: number; w: number; h: number };
+  /** A subsample of Presage's landmarks, normalized like `box`. */
+  points?: [number, number][];
+  stable: boolean;
+  blinking?: boolean;
+  talking?: boolean;
+  /** Blinks Presage detected over the last minute, once at least 20 seconds of face data exist. */
+  blinksPerMinute?: number;
+}
+
+export type FrameEncoding = 'rgb' | 'jpeg';
 
 export const MONITORING_LIMITS = {
   /** Frames are downscaled in the browser before upload (long side ≤ 480); raw video is never stored. */

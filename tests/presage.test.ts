@@ -1,0 +1,131 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import jpeg from 'jpeg-js';
+import { packBatch, type EncodedFrame } from '../src/features/insights/cameraPipeline.js';
+import { BlinkCounter, coverMapping, framingFor, headPose, presageStage, smoothBox, squareAround, type StageInput } from '../src/features/insights/faceGeometry.js';
+import { faceFromMetrics, hrvFromMetrics, MonitoringService, type PresageModule } from '../server/physiology.js';
+
+test('the tracking square is square on screen, centred on the face, and steady against jitter', () => {
+  const aspect = 4 / 3;
+  const box = squareAround({ x: 0.4, y: 0.3, w: 0.15, h: 0.3 }, aspect);
+  assert.ok(Math.abs(box.w * aspect - box.h) < 1e-9, 'equal sides in pixels');
+  assert.ok(Math.abs(box.x + box.w / 2 - 0.475) < 1e-9 && Math.abs(box.y + box.h / 2 - 0.45) < 1e-9, 'centred on the face');
+  assert.deepEqual(smoothBox(box, { ...box, x: box.x + 0.001 }), box, 'sub-deadband jitter is ignored');
+  const moved = smoothBox(box, { ...box, x: box.x + 0.05 });
+  assert.ok(moved.x > box.x && moved.x < box.x + 0.05, 'real movement is followed smoothly');
+  const jumped = { ...box, x: box.x + 0.6 };
+  assert.deepEqual(smoothBox(box, jumped), jumped, 'a re-acquired face snaps instead of sliding across');
+  // 640×480 frame shown in a 300×300 cover element: cropped left and right equally.
+  const map = coverMapping(640, 480, 300, 300);
+  assert.equal(map.x(0.5), 150); assert.equal(map.y(0), 0); assert.equal(map.width, 400);
+});
+
+test('head pose, blink rate and framing come from real tracker values', () => {
+  assert.deepEqual(Object.values(headPose([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])).map((value) => Math.round(Math.abs(value))), [0, 0, 0]);
+  const c = Math.cos(Math.PI / 6); const s = Math.sin(Math.PI / 6);
+  assert.equal(Math.round(headPose([c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1]).yaw), 30);
+
+  const blinks = new BlinkCounter();
+  for (let at = 0; at <= 30_000; at += 50) blinks.push(at, at % 3000 < 150 && at > 0 ? 0.9 : 0.1);
+  assert.equal(blinks.perMinute(30_000), 20);
+  const long = new BlinkCounter();
+  for (let at = 0; at <= 25_000; at += 50) long.push(at, at > 1000 && at < 1800 ? 0.9 : 0.1);
+  assert.equal(long.perMinute(25_000), 0, 'eyes closed for 800 ms is not a blink');
+  assert.equal(new BlinkCounter().perMinute(5000), undefined, 'no rate before enough face time');
+
+  const pose = { yaw: 0, pitch: 0, roll: 0 };
+  const centred = { x: 0.35, y: 0.25, w: 0.3, h: 0.45 };
+  assert.equal(framingFor({ faces: 1, bounds: centred, pose, brightness: 120 }).code, 'ok');
+  assert.equal(framingFor({ faces: 2, bounds: centred, pose }).code, 'multiple');
+  assert.equal(framingFor({ faces: 1, bounds: centred, pose, brightness: 30 }).code, 'too_dark');
+  assert.equal(framingFor({ faces: 1, bounds: { ...centred, h: 0.1 }, pose }).code, 'too_far');
+  assert.equal(framingFor({ faces: 1, bounds: centred, pose: { ...pose, yaw: 40 } }).code, 'turned');
+});
+
+test('the panel headline follows real signals and treats warm-up as collecting, not failure', () => {
+  const base: StageInput = { phase: 'calibrating', simulated: false, camera: true, windowOpen: true, tracker: 'ready', face: 'found', framesReceived: 120, code: 'OK', metricsPackets: 0, freshValid: false, anyValid: false };
+  assert.equal(presageStage({ ...base, phase: 'requesting', camera: false, windowOpen: false }).id, 'camera');
+  assert.equal(presageStage({ ...base, windowOpen: false }).id, 'loading');
+  assert.equal(presageStage({ ...base, framesReceived: 0, code: undefined }).id, 'detected');
+  assert.equal(presageStage(base).id, 'tracking');
+  assert.equal(presageStage({ ...base, metricsPackets: 4 }).id, 'collecting');
+  assert.equal(presageStage({ ...base, metricsPackets: 4, freshValid: true, anyValid: true, phase: 'monitoring' }).id, 'measuring');
+  assert.equal(presageStage({ ...base, face: 'none' }).id, 'searching');
+  assert.equal(presageStage({ ...base, face: 'none', freshValid: true, anyValid: true }).id, 'measuring', 'Presage’s validated reading outranks a local tracker miss');
+  assert.equal(presageStage({ ...base, simulated: true, face: 'none', freshValid: true }).id, 'searching', 'simulated readings never imply a face');
+  assert.equal(presageStage({ ...base, face: 'lost' }).id, 'lost');
+  assert.equal(presageStage({ ...base, code: 'FACE_NOT_CENTERED' }).id, 'adjust');
+  assert.equal(presageStage({ ...base, processing: 'error' }).id, 'error');
+  // Without the local tracker, Presage's own validation still drives the headline.
+  assert.equal(presageStage({ ...base, tracker: 'unavailable', code: 'NO_FACE_FOUND' }).id, 'searching');
+  assert.equal(presageStage({ ...base, phase: 'stopping' }).id, 'saving');
+});
+
+test('Presage face metrics are normalized to the frame, and HRV is valid only at its published confidence', () => {
+  const at = 1_700_000_000_000_000;
+  const pixels = faceFromMetrics({ face: { landmarks: [{ value: [{ x: 200, y: 100 }, { x: 280, y: 100 }, { x: 240, y: 200 }], stable: true, timestamp: at }], talking: [{ detected: true, timestamp: at }] } }, 320, 240);
+  assert.deepEqual(pixels!.box && Object.values(pixels!.box).map((value) => Math.round(value * 1000) / 1000), [0.625, 0.417, 0.25, 0.417]);
+  assert.equal(pixels!.talking, true); assert.equal(pixels!.stable, true);
+  assert.equal(pixels!.at, new Date(at / 1000).toISOString());
+  const normalized = faceFromMetrics({ face: { landmarks: [{ value: [{ x: 0.4, y: 0.3 }, { x: 0.6, y: 0.3 }, { x: 0.5, y: 0.6 }] }] } });
+  assert.ok(normalized!.box && Math.abs(normalized!.box.w - 0.2) < 1e-9);
+  const offFrame = faceFromMetrics({ face: { landmarks: [{ value: [{ x: 900, y: 100 }, { x: 990, y: 100 }, { x: 950, y: 200 }] }] } }, 320, 240);
+  assert.equal(offFrame!.box, undefined, 'coordinates that cannot be placed are not drawn');
+  assert.equal(faceFromMetrics({ cardio: {} }), undefined);
+  assert.equal(hrvFromMetrics({ cardio: { hrv: [{ rmssd: 42.4, confidence: 70 }] } })!.valid, true);
+  assert.equal(hrvFromMetrics({ cardio: { hrv: [{ rmssd: 42.4, confidence: 20 }] } })!.valid, false);
+  assert.equal(hrvFromMetrics({ cardio: { hrv: [{ rmssd: 0, confidence: 90 }] } }), undefined);
+});
+
+class FakeSdk {
+  static last?: FakeSdk;
+  handlers: Record<string, (...args: never[]) => void> = {};
+  frames: number[] = []; sizes: string[] = [];
+  constructor(readonly options: { requestedMetrics?: number[] }) { FakeSdk.last = this; }
+  useCustomInput() { return this; }
+  start() {}
+  stop() {}
+  async destroy() {}
+  sendFrame(buffer: Uint8Array, width: number, height: number, stride: number, _format: number, timestampUs: number) {
+    assert.equal(buffer.length, stride * height); this.frames.push(timestampUs); this.sizes.push(`${width}x${height}`);
+    return true;
+  }
+  emit(event: string, ...args: unknown[]) { (this.handlers[event] as unknown as (...values: unknown[]) => void)(...args); }
+  on(event: string, callback: (...args: never[]) => void) { this.handlers[event] = callback; return this; }
+}
+
+const jpegFrame = (timestampUs: number, width = 96, height = 72): EncodedFrame => {
+  const rgba = Buffer.alloc(width * height * 4, 128);
+  return { timestampUs, width, height, encoding: 'jpeg', bytes: new Uint8Array(jpeg.encode({ data: rgba, width, height }, 90).data) };
+};
+
+test('JPEG batches are decoded in order on the server, and Presage face lock and processing state reach the status', async () => {
+  let decoded: unknown = {};
+  const module: PresageModule = { SmartSpectraSDK: FakeSdk as unknown as PresageModule['SmartSpectraSDK'], decodeMetrics: () => decoded, faceMetrics: [10, 11, 12, 14] };
+  const service = new MonitoringService({ env: { NODE_ENV: 'test', PRESAGE_API_KEY: 'k' }, loadPresage: async () => module });
+  const window = await service.start('s', 'in_session');
+  const sdk = FakeSdk.last!;
+  assert.ok(sdk.options.requestedMetrics!.includes(10) && !sdk.options.requestedMetrics!.includes(14), 'face metrics requested, expressions never');
+
+  const origin = Date.now() * 1000;
+  const times = [0, 33_333, 66_667].map((offset) => origin + offset);
+  let status = service.ingest('s', window.id, Buffer.from(packBatch(times.map((time) => jpegFrame(time)))), 96, 72, 30, 'jpeg');
+  assert.deepEqual(sdk.frames, times); assert.deepEqual(sdk.sizes, ['96x72', '96x72', '96x72']);
+  assert.equal(status.presage!.metricsPackets, 0, 'frames alone are not analysis output');
+
+  sdk.emit('processingStatus', 3);
+  decoded = { face: { landmarks: [{ value: [{ x: 30, y: 20 }, { x: 60, y: 20 }, { x: 45, y: 50 }], stable: true, timestamp: times[2] }] }, cardio: { hrv: [{ rmssd: 38, confidence: 64, timestamp: times[2] }] } };
+  sdk.emit('metrics', Buffer.alloc(1));
+  status = service.ingest('s', window.id, Buffer.from(packBatch([jpegFrame(origin + 100_000)])), 96, 72, 30, 'jpeg');
+  assert.equal(status.presage!.processing, 'running');
+  assert.equal(status.presage!.metricsPackets, 1);
+  assert.ok(status.presage!.face!.box && status.presage!.face!.box.x > 0.3 && status.presage!.face!.box.x < 0.32, 'pixel landmarks normalized by the decoded frame size');
+  assert.deepEqual(status.presage!.hrv && [status.presage!.hrv.rmssdMs, status.presage!.hrv.valid], [38, true]);
+  assert.ok(status.elapsedMs! >= 99 && status.elapsedMs! <= 101, 'warm-up clock runs on capture time');
+
+  const truncated = Buffer.from(packBatch([jpegFrame(origin + 200_000)])).subarray(0, 40);
+  assert.throws(() => service.ingest('s', window.id, truncated, 96, 72, 30, 'jpeg'), /malformed/);
+  const corrupt = Buffer.from(packBatch([{ ...jpegFrame(origin + 300_000), bytes: new Uint8Array(64).fill(7) }]));
+  assert.throws(() => service.ingest('s', window.id, corrupt, 96, 72, 30, 'jpeg'), /could not be decoded/);
+  service.close();
+});

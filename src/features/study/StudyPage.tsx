@@ -12,7 +12,7 @@ import { ConversationList } from './ConversationStatus';
 import { AlexAvatar } from './AlexAvatar';
 import { ALEX_LABELS, type AlexState } from './alexState';
 import { QuestionCard, type SaveState } from './QuestionCard';
-import { MonitorPrompt } from '../insights/MonitorDock';
+import { PresagePanel } from '../insights/PresagePanel';
 import './study.css';
 
 export function StudyPage() {
@@ -294,6 +294,7 @@ function TeachingPanel({ session }: { session: PracticeSession }) {
       </section>
 
       <aside className="teach-side">
+        <PresagePanel session={session} />
         <section className="side-card card">
           <span className="eyebrow">Topic</span>
           <h3>{session.title}</h3>
@@ -309,7 +310,6 @@ function TeachingPanel({ session }: { session: PracticeSession }) {
           <span className="eyebrow">Teaching tips</span>
           <ul className="tips"><li>Start with the big idea, then the steps.</li><li>Use an example Alex could picture.</li><li>When Alex asks “why?”, go one level deeper.</li></ul>
         </section>
-        <MonitorPrompt session={session} compact />
         {session.notes && <details className="disclosure"><summary>Your notes<PracticeIcon name="chevron" size={14} /></summary><div className="disclosure-body"><p className="notes-text">{session.notes}</p></div></details>}
       </aside>
     </div>
@@ -350,7 +350,6 @@ function Overview({ session, onBegin }: { session: PracticeSession; onBegin: () 
       </ol>
       <Button size="lg" onClick={onBegin}>Start the 3-question check<PracticeIcon name="arrow" size={18} /></Button>
     </div>
-    <MonitorPrompt session={session} />
   </section>;
 }
 
@@ -395,6 +394,7 @@ function StudyContent({ sessionId }: { sessionId: string }) {
       <div><span className="eyebrow">{heading.eyebrow}</span><h1 tabIndex={-1}>{showOverview ? 'Here’s what we’ll practise' : heading.title(session)}</h1>{session.stage !== 'teaching' && !showOverview && <p className="muted">{session.stage === 'preparing' ? session.description || 'Reading your study material' : session.title}</p>}</div>
       {session.stage !== 'teaching' && <Button variant="secondary" size="sm" onClick={() => void exit()} disabled={busy[sessionId]}>Save &amp; exit</Button>}
     </header>
+    {session.stage === 'teaching' && session.lifecycle !== 'paused' ? <ConversationProvider><TeachingPanel session={session} /></ConversationProvider> : <div className="study-split"><div className="study-main">
     {session.lifecycle === 'paused' ? <StatusCard title="Your session is paused" icon="pause"><p className="muted">Everything you’ve written is saved. Pick up right where you left off.</p><Button disabled={busy[sessionId]} onClick={() => void resumeSession(sessionId).catch(() => undefined)}>Continue session<PracticeIcon name="arrow" size={16} /></Button></StatusCard> :
       preparing ? (busy[sessionId] ? <StatusCard busy title={session.materials?.length ? `Reading ${session.materials.length === 1 ? 'your file' : 'your files'}…` : 'Preparing your questions…'}><p className="muted">Finding three core concepts and writing a short check for each.</p></StatusCard>
         : <section className="status-card card enter" aria-live="polite">
@@ -422,9 +422,10 @@ function StudyContent({ sessionId }: { sessionId: string }) {
       session.stage === 'baseline_evaluating' || session.stage === 'recheck_evaluating' ? (busy[sessionId] ? <StatusCard busy title="Checking your answers…"><p className="muted">Your responses are saved.</p></StatusCard>
         : <StatusCard tone={error ? 'error' : 'neutral'} icon="clock" title={error ? 'We couldn’t check your answers yet' : 'Grading was interrupted or is still processing'}><p className="muted">Your responses are kept.</p>
           {attempt && <div className="button-row"><Button onClick={() => void submitAssessment(sessionId, attempt.id).catch(() => undefined)}><PracticeIcon name="refresh" size={16} />Retry grading</Button><Button variant="secondary" onClick={() => void loadSession(sessionId).catch(() => undefined)}>Refresh status</Button></div>}</StatusCard>) :
-      <ConversationProvider><TeachingPanel session={session} /></ConversationProvider>}
-    {error && session.stage !== 'teaching' && <p className="notice notice--danger" role="alert"><PracticeIcon name="alert" size={16} />{error}</p>}
+      null}
+    {error && <p className="notice notice--danger" role="alert"><PracticeIcon name="alert" size={16} />{error}</p>}
     {session.stage === 'recheck' && <ConversationList session={session} showMessages={false} />}
+    </div><PresagePanel session={session} /></div>}
     {storageError && <p className="notice notice--warning" role="alert"><PracticeIcon name="alert" size={16} />{storageError}</p>}
   </div>;
 }
