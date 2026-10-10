@@ -1,4 +1,4 @@
-import type { CreatePracticeInput, PracticeSession, SessionAccess, UpdatePracticeInput, VoiceCredentials } from '../../../shared/types';
+import type { CreatePracticeInput, MonitoringPurpose, MonitoringStatus, PracticeSession, SessionAccess, UpdatePracticeInput, VoiceCredentials } from '../../../shared/types';
 
 export interface PracticeService {
   create(input: CreatePracticeInput): Promise<SessionAccess>;
@@ -11,4 +11,7 @@ export interface PracticeService {
   remove(id: string, token: string): Promise<{ deleted: true }>;
   startTextConversation(id: string, token: string): Promise<PracticeSession>;
   sendTextMessage(id: string, token: string, conversationId: string, text?: string): Promise<PracticeSession>;
+  startMonitoring(id: string, token: string, purpose: MonitoringPurpose): Promise<PracticeSession>;
+  sendFrames(id: string, token: string, windowId: string, frames: Uint8Array, width: number, height: number, captureFps?: number): Promise<MonitoringStatus>;
+  stopMonitoring(id: string, token: string, windowId: string, reason?: 'camera_too_slow'): Promise<{ status: MonitoringStatus; session: PracticeSession }>;
 }

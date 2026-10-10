@@ -12,6 +12,7 @@ import { ConversationList } from './ConversationStatus';
 import { AlexAvatar } from './AlexAvatar';
 import { ALEX_LABELS, type AlexState } from './alexState';
 import { QuestionCard, type SaveState } from './QuestionCard';
+import { MonitorPrompt } from '../insights/MonitorDock';
 import './study.css';
 
 export function StudyPage() {
@@ -31,15 +32,19 @@ function StatusCard({ title, children, busy = false, tone = 'neutral', icon = 'i
 }
 
 function AssessmentPanel({ session, attempt }: { session: PracticeSession; attempt: AssessmentAttempt }) {
-  const { updateDraft, submitAssessment, busy, setNervousness, draftStatus, saveDraft, storageError } = useSessions();
+  const { updateDraft, submitAssessment, busy, setNervousness, draftStatus, saveDraft, storageError, startAttempt } = useSessions();
   const [ratingSkipped, setRatingSkipped] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const index = attempt.currentQuestionIndex;
   const question = attempt.questions[index];
   const answer = attempt.answers[index];
   const recheck = attempt.kind === 'recheck';
+  // The first question is on screen: record when this assessment genuinely began.
+  const attemptStarted = Boolean(attempt.startedAt);
+  useEffect(() => { if (!attemptStarted && session.lifecycle === 'active') void startAttempt(session.id, attempt.id).catch(() => undefined); }, [attempt.id, attemptStarted, session.id, session.lifecycle, startAttempt]);
   function move(skip = false) {
-    const response = skip ? { ...answer, skipped: true } : answer;
+    // answeredAt marks the moment the learner moved on; the server turns each new value into a timeline event.
+    const response = { ...(skip ? { ...answer, skipped: true } : answer), answeredAt: new Date().toISOString() };
     updateDraft(session.id, attempt.id, response, Math.min(index + 1, attempt.questions.length - 1));
     if (index === attempt.questions.length - 1) {
       setSubmitting(true);
@@ -287,6 +292,7 @@ function TeachingPanel({ session }: { session: PracticeSession }) {
           <span className="eyebrow">Teaching tips</span>
           <ul className="tips"><li>Start with the big idea, then the steps.</li><li>Use an example Alex could picture.</li><li>When Alex asks “why?”, go one level deeper.</li></ul>
         </section>
+        <MonitorPrompt session={session} compact />
         {session.notes && <details className="disclosure"><summary>Your notes<PracticeIcon name="chevron" size={14} /></summary><div className="disclosure-body"><p className="notes-text">{session.notes}</p></div></details>}
       </aside>
     </div>
@@ -327,6 +333,7 @@ function Overview({ session, onBegin }: { session: PracticeSession; onBegin: () 
       </ol>
       <Button size="lg" onClick={onBegin}>Start the 3-question check<PracticeIcon name="arrow" size={18} /></Button>
     </div>
+    <MonitorPrompt session={session} />
   </section>;
 }
 

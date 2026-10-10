@@ -1,5 +1,6 @@
 import { createBrowserRouter, Outlet, RouterProvider } from 'react-router';
 import { SessionProvider } from '../state/SessionProvider';
+import { MonitoringProvider } from '../features/insights/MonitoringProvider';
 import { AppLayout } from '../components/AppLayout';
 import { EmptyState } from '../components/EmptyState';
 import { HomePage } from '../features/topics/HomePage';
@@ -7,7 +8,7 @@ import { StudyPage } from '../features/study/StudyPage';
 import { ResultsPage } from '../features/feedback/ResultsPage';
 
 function Providers() {
-  return <SessionProvider><Outlet /></SessionProvider>;
+  return <SessionProvider><MonitoringProvider><Outlet /></MonitoringProvider></SessionProvider>;
 }
 
 // A small data router enables unsaved-draft blocking; no loaders or actions.

@@ -112,12 +112,21 @@ export interface PracticeQuestion {
   supportsWorking: boolean;
 }
 
+/** Optional self-rated certainty for one answer. Independent of the camera. */
+export type ConfidenceLevel = 'low' | 'medium' | 'high';
+
 export interface AssessmentAnswer {
   questionId: string;
   text: string;
   working: string;
   skipped: boolean;
+  /** Legacy "not sure" flag; kept in sync with confidence === 'low'. */
   uncertain: boolean;
+  confidence?: ConfidenceLevel;
+  /** Browser time the confidence was last chosen. */
+  confidenceAt?: string;
+  /** Browser time the learner moved on from this question (answered or skipped). */
+  answeredAt?: string;
 }
 
 export interface QuestionGrade {
@@ -145,8 +154,101 @@ export interface AssessmentAttempt {
   questions: PracticeQuestion[];
   answers: AssessmentAnswer[];
   currentQuestionIndex: number;
+  /** When the learner first saw the first question. */
+  startedAt?: string;
   submittedAt?: string;
   grade?: AssessmentGrade;
+}
+
+/** Learning phases on the shared session timeline. */
+export type TimelinePhase = 'preparation' | 'baseline' | 'teaching' | 'recheck' | 'results';
+
+export type SessionEventType =
+  | 'session_created' | 'concepts_ready'
+  | 'assessment_started' | 'answer_recorded' | 'assessment_submitted' | 'assessment_graded'
+  | 'teaching_started' | 'nervousness_recorded'
+  | 'session_paused' | 'session_resumed' | 'session_finished';
+
+/**
+ * One genuine, timestamped moment in a session. Events are appended by the server when
+ * the moment happens (or, for answers, with the browser time the learner moved on) and
+ * are never back-filled. Conversation turns and physiology samples keep their own
+ * timestamps on their existing structures and are merged by `buildTimeline`.
+ */
+export interface SessionEvent {
+  id: string;
+  /** Monotonic per session; breaks ties between equal timestamps. */
+  seq: number;
+  sessionId: string;
+  type: SessionEventType;
+  at: string;
+  attemptId?: string;
+  questionId?: string;
+  conceptId?: string;
+  kind?: 'baseline' | 'recheck';
+  confidence?: ConfidenceLevel;
+  skipped?: boolean;
+  score?: number;
+  maxScore?: number;
+  value?: number;
+  when?: 'before' | 'after';
+}
+
+export type PhysiologySource = 'presage' | 'simulated';
+export type MonitoringPurpose = 'before_assessment' | 'after_teaching' | 'after_reassessment' | 'in_session';
+
+/** One downsampled reading. `valid` means it passed Presage's confidence, stability, warm-up and range checks. */
+export interface PhysiologySample {
+  at: string;
+  metric: 'pulse' | 'breathing';
+  /** Beats or breaths per minute. */
+  value: number;
+  /** 0–100 as reported by the SDK (or the simulator). */
+  confidence: number;
+  stable: boolean;
+  valid: boolean;
+}
+
+export interface QualityNote { at: string; code: string; hint: string }
+
+export interface MonitoringWindow {
+  id: string;
+  source: PhysiologySource;
+  purpose: MonitoringPurpose;
+  startedAt: string;
+  endedAt?: string;
+  status: 'active' | 'ended' | 'error';
+  endReason?: string;
+  framesReceived: number;
+  samples: PhysiologySample[];
+  /** Validation status changes (face not found, motion, lighting…), debounced. */
+  quality: QualityNote[];
+  /** Latest measured camera pipeline figures for this window. */
+  pipeline?: PipelineStats;
+}
+
+/**
+ * Measured, never advertised, frame rates. `captureFps` comes from the browser's capture
+ * timestamps, `deliveredFps` from frames the server accepted, `processedFps` from frames
+ * Presage reports it consumed (`frameSentThrough`).
+ */
+export interface PipelineStats {
+  captureFps?: number;
+  deliveredFps?: number;
+  processedFps?: number;
+  width?: number;
+  height?: number;
+  /** Frames rejected by the server as out of order or duplicate. */
+  outOfOrder: number;
+  /** Frames Presage reported it did not use. */
+  notProcessed: number;
+}
+
+export interface PhysiologyHealth {
+  source: PhysiologySource;
+  available: boolean;
+  /** Why real monitoring is unavailable (missing key, SDK not installed…). */
+  reason?: string;
 }
 
 export interface ConversationSegment {
@@ -197,6 +299,10 @@ export interface PracticeSession {
   operationError?: string;
   nervousnessBefore?: NervousnessValue;
   nervousnessAfter?: NervousnessValue;
+  /** Older sessions omit this; their timeline is reconstructed only from stored timestamps. */
+  events?: SessionEvent[];
+  /** Optional camera monitoring windows. Absent when monitoring was never used. */
+  monitoring?: MonitoringWindow[];
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
@@ -218,6 +324,8 @@ export interface UpdatePracticeInput {
   attemptId?: string;
   answers?: AssessmentAnswer[];
   currentQuestionIndex?: number;
+  /** Marks `attemptId` as started (first question shown). Ignored once set. */
+  attemptStarted?: boolean;
   nervousnessBefore?: NervousnessValue | null;
   nervousnessAfter?: NervousnessValue | null;
 }
@@ -238,7 +346,34 @@ export interface IntegrationHealth {
   geminiConfigured: boolean;
   voiceConfigured: boolean;
   providerMode?: 'real' | 'mock';
+  physiology?: PhysiologyHealth;
 }
+
+/** Live status returned while frames stream to the server. */
+export interface MonitoringStatus {
+  window: MonitoringWindow;
+  /** Latest validation hint from the SDK, if any. */
+  hint?: string;
+  code?: string;
+  latest: { pulse?: PhysiologySample; breathing?: PhysiologySample };
+  pipeline?: PipelineStats;
+}
+
+export const MONITORING_LIMITS = {
+  /** Frames are downscaled in the browser before upload (long side ≤ 480); raw video is never stored. */
+  maxWidth: 640,
+  maxHeight: 480,
+  maxBatchBytes: 16_000_000,
+  /** A window with no frames for this long is closed as interrupted. */
+  idleMs: 15_000,
+  maxSamplesPerWindow: 7200,
+  pulseWarmupMs: 12_000,
+  breathingWarmupMs: 30_000,
+  pulseMinConfidence: 40,
+  breathingMinConfidence: 45,
+  pulseRange: [40, 110],
+  breathingRange: [5, 40],
+} as const;
 
 export const MATERIAL_LIMITS = {
   files: 3,

@@ -1,6 +1,7 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "web-mock", "runtimeExecutable": "cmd", "runtimeArgs": ["/c", "set PORT=3111&& npx vite --port 5181 --strictPort"], "port": 5181 }
+    { "name": "web-mock", "runtimeExecutable": "cmd", "runtimeArgs": ["/c", "set PORT=3111&& npx vite --port 5181 --strictPort"], "port": 5181 },
+    { "name": "api-mock-simulated", "runtimeExecutable": "cmd", "runtimeArgs": ["/c", "set NODE_ENV=development&& set PRACTICE_PROVIDER_MODE=mock&& set PHYSIOLOGY_SOURCE=simulated&& set MOCK_PROVIDER_DELAY_MS=150&& set PORT=3111&& npx tsx server/index.ts"], "port": 3111 }
   ]
 }

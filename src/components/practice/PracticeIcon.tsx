@@ -1,7 +1,7 @@
 export type PracticeIconName =
   | 'home' | 'practice' | 'history' | 'arrow' | 'check' | 'mic' | 'mute' | 'book' | 'close' | 'leaf' | 'message'
   | 'plus' | 'upload' | 'file' | 'chevron' | 'back' | 'send' | 'stop' | 'alert' | 'info' | 'sparkle' | 'refresh'
-  | 'trash' | 'keyboard' | 'wave' | 'target' | 'trend' | 'menu' | 'clock' | 'pause';
+  | 'trash' | 'keyboard' | 'wave' | 'target' | 'trend' | 'menu' | 'clock' | 'pause' | 'camera' | 'heart' | 'gauge';
 
 const paths: Record<PracticeIconName, string> = {
   home: 'm3 10 9-7 9 7v10H3V10Zm6 10v-7h6v7',
@@ -34,6 +34,9 @@ const paths: Record<PracticeIconName, string> = {
   menu: 'M4 7h16M4 12h16M4 17h16',
   clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-13v4l3 2',
   pause: 'M9 5v14m6-14v14',
+  camera: 'M3 8a1 1 0 0 1 1-1h3l2-3h6l2 3h3a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8Zm9 9a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z',
+  heart: 'M12 20s-7-4.4-9-9a4.6 4.6 0 0 1 9-3 4.6 4.6 0 0 1 9 3c-2 4.6-9 9-9 9Z',
+  gauge: 'M4 18a8 8 0 1 1 16 0M12 18l4-6',
 };
 
 export function PracticeIcon({ name, size = 20, strokeWidth = 1.6 }: { name: PracticeIconName; size?: number; strokeWidth?: number }) {

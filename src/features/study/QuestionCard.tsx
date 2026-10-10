@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react';
-import type { AssessmentAnswer, PracticeQuestion } from '../../../shared/types';
+import '../insights/insights.css';
+import type { AssessmentAnswer, ConfidenceLevel, PracticeQuestion } from '../../../shared/types';
+import { CONFIDENCE_LABELS } from '../../../shared/insights';
 import { PRACTICE_LIMITS } from '../../../shared/types';
 import { Button } from '../../components/Button';
 import { PracticeIcon } from '../../components/practice/PracticeIcon';
@@ -62,10 +64,15 @@ export function QuestionCard({ question, answer, conceptTitle, index, count, sav
             onChange={(event) => onChange({ ...answer, working: event.target.value, skipped: false })} placeholder="Reasoning, calculations, rough notes…" /></div>
       </details>}
 
-      <label className={`unsure-toggle ${answer.uncertain ? 'is-on' : ''}`}>
-        <input type="checkbox" checked={answer.uncertain} disabled={disabled} onChange={(event) => onChange({ ...answer, uncertain: event.target.checked })} />
-        <span className="unsure-switch" aria-hidden="true" /><span><strong>I’m not sure yet</strong><span>No penalty for being honest.</span></span>
-      </label>
+      <fieldset className="confidence" disabled={disabled}>
+        <legend>How sure are you? <span className="optional">optional · no penalty for being honest</span></legend>
+        <div className="confidence-options">{(['low', 'medium', 'high'] as ConfidenceLevel[]).map((level) => <button key={level} type="button"
+          className={`confidence-option confidence-option--${level}`} aria-pressed={answer.confidence === level}
+          onClick={() => onChange(answer.confidence === level
+            ? { ...answer, confidence: undefined, confidenceAt: undefined, uncertain: false }
+            : { ...answer, confidence: level, confidenceAt: new Date().toISOString(), uncertain: level === 'low' })}>
+          <span className="confidence-meter" aria-hidden="true">{[0, 1, 2].map((bar) => <i key={bar} className={bar <= ['low', 'medium', 'high'].indexOf(level) ? 'is-on' : ''} />)}</span>{CONFIDENCE_LABELS[level]}</button>)}</div>
+      </fieldset>
 
       {answer.skipped && <p className="notice" role="status"><PracticeIcon name="info" size={16} />This question is marked skipped. Typing an answer clears the skip.</p>}
     </div>

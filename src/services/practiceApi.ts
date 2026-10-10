@@ -1,4 +1,4 @@
-import type { IntegrationHealth, PracticeSession, SessionAccess, VoiceCredentials } from '../../shared/types';
+import type { IntegrationHealth, MonitoringStatus, PracticeSession, SessionAccess, VoiceCredentials } from '../../shared/types';
 import type { PracticeService } from './contracts/practice';
 
 export class PracticeApiError extends Error {
@@ -8,9 +8,10 @@ export class PracticeApiError extends Error {
 async function request<T>(path: string, method: string, token?: string, input?: unknown): Promise<T> {
   let response: Response;
   try {
+    const binary = input instanceof Uint8Array;
     response = await fetch(`/api${path}`, {
-      method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: input === undefined ? undefined : JSON.stringify(input), signal: AbortSignal.timeout(100_000),
+      method, headers: { 'Content-Type': binary ? 'application/octet-stream' : 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: input === undefined ? undefined : binary ? input as Uint8Array<ArrayBuffer> : JSON.stringify(input), signal: AbortSignal.timeout(binary ? 15_000 : 100_000),
     });
   } catch { throw new PracticeApiError('The server could not be reached. Your local drafts are kept; reconnect and try again.'); }
   const value: unknown = await response.json().catch(() => null);
@@ -34,5 +35,8 @@ export const practiceApi: PracticeService = {
   finalizeConversation: (id, token, conversationId) => request<PracticeSession>(`${path(id)}/conversations/${encodeURIComponent(conversationId)}/finalize`, 'POST', token, {}),
   remove: (id, token) => request<{ deleted: true }>(path(id), 'DELETE', token),
   startTextConversation: (id, token) => request<PracticeSession>(`${path(id)}/conversations/text`, 'POST', token, {}),
+  startMonitoring: (id, token, purpose) => request<PracticeSession>(`${path(id)}/monitoring`, 'POST', token, { purpose }),
+  sendFrames: (id, token, windowId, frames, width, height, captureFps) => request<MonitoringStatus>(`${path(id)}/monitoring/${encodeURIComponent(windowId)}/frames?w=${width}&h=${height}${captureFps ? `&cfps=${captureFps.toFixed(1)}` : ''}`, 'POST', token, frames),
+  stopMonitoring: (id, token, windowId, reason) => request<{ status: MonitoringStatus; session: PracticeSession }>(`${path(id)}/monitoring/${encodeURIComponent(windowId)}/stop`, 'POST', token, reason ? { reason } : {}),
   sendTextMessage: (id, token, conversationId, text) => request<PracticeSession>(`${path(id)}/conversations/${encodeURIComponent(conversationId)}/messages`, 'POST', token, text === undefined ? {} : { text }),
 };

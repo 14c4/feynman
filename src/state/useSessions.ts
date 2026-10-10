@@ -1,6 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { SessionState } from './sessionReducer';
-import type { AssessmentAnswer, CreatePracticeInput, IntegrationHealth, NervousnessValue, VoiceCredentials } from '../../shared/types';
+import type { AssessmentAnswer, CreatePracticeInput, IntegrationHealth, MonitoringPurpose, MonitoringStatus, NervousnessValue, VoiceCredentials } from '../../shared/types';
 
 export interface SessionContextValue extends SessionState {
   storageError?: string;
@@ -27,6 +27,12 @@ export interface SessionContextValue extends SessionState {
   startTextConversation: (id: string) => Promise<void>;
   /** Omit `text` to retry Alex's reply to the last saved message. */
   sendTextMessage: (id: string, conversationId: string, text?: string) => Promise<void>;
+  /** Records when the learner first sees an assessment's first question. */
+  startAttempt: (id: string, attemptId: string) => Promise<void>;
+  /** Optional camera monitoring. Returns the new window's id. */
+  startMonitoring: (id: string, purpose: MonitoringPurpose) => Promise<string>;
+  sendFrames: (id: string, windowId: string, frames: Uint8Array, width: number, height: number, captureFps?: number) => Promise<MonitoringStatus>;
+  stopMonitoring: (id: string, windowId: string, reason?: 'camera_too_slow') => Promise<MonitoringStatus>;
 }
 
 export const SessionContext = createContext<SessionContextValue | null>(null);

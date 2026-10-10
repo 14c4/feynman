@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode } from 'react';
-import type { AssessmentAnswer, CreatePracticeInput, IntegrationHealth, NervousnessValue, PracticeSession, UpdatePracticeInput } from '../../shared/types';
+import type { AssessmentAnswer, CreatePracticeInput, IntegrationHealth, MonitoringPurpose, NervousnessValue, PracticeSession, UpdatePracticeInput } from '../../shared/types';
 import { loadIntegrationHealth, PracticeApiError, practiceApi } from '../services/practiceApi';
 import { SessionContext } from './useSessions';
 import { initialSessionState, sessionReducer, type SessionAction, type SessionState } from './sessionReducer';
@@ -148,6 +148,24 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     send({ type: 'remove', sessionIds: ids });
   }, [send]);
   const startTextConversation = useCallback((id: string) => run(id, async () => receive(await practiceApi.startTextConversation(id, tokenFor(id)))), [receive, run, tokenFor]);
+  const startAttempt = useCallback((id: string, attemptId: string) => run(id, async () => {
+    await flush(id);
+    receive(await practiceApi.update(id, tokenFor(id), { attemptId, attemptStarted: true }));
+  }, false), [flush, receive, run, tokenFor]);
+  // Monitoring calls bypass the session queue: frames stream continuously and must never wait behind grading.
+  const startMonitoring = useCallback(async (id: string, purpose: MonitoringPurpose) => {
+    const session = await practiceApi.startMonitoring(id, tokenFor(id), purpose);
+    receive(session);
+    const window = session.monitoring?.find((item) => item.status === 'active');
+    if (!window) throw new Error('Monitoring did not start. Please try again.');
+    return window.id;
+  }, [receive, tokenFor]);
+  const sendFrames = useCallback((id: string, windowId: string, frames: Uint8Array, width: number, height: number, captureFps?: number) => practiceApi.sendFrames(id, tokenFor(id), windowId, frames, width, height, captureFps), [tokenFor]);
+  const stopMonitoring = useCallback(async (id: string, windowId: string, reason?: 'camera_too_slow') => {
+    const { status, session } = await practiceApi.stopMonitoring(id, tokenFor(id), windowId, reason);
+    receive(session);
+    return status;
+  }, [receive, tokenFor]);
   const sendTextMessage = useCallback((id: string, conversationId: string, text?: string) => run(id, async () => receive(await practiceApi.sendTextMessage(id, tokenFor(id), conversationId, text))), [receive, run, tokenFor]);
 
   useEffect(() => {
@@ -178,5 +196,5 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [persist]);
   return <SessionContext.Provider value={{ ...state, storageError, providerMode, integration, draftStatus, saveDraft, createSession, loadSession, prepareSession, updateDraft,
     submitAssessment, saveAndExit, resumeSession, startRecheck, practiceAgain, finishSession, setNervousness,
-    requestVoice, registerConversation, finalizeConversation, removeSessions, startTextConversation, sendTextMessage }}>{children}</SessionContext.Provider>;
+    requestVoice, registerConversation, finalizeConversation, removeSessions, startTextConversation, sendTextMessage, startAttempt, startMonitoring, sendFrames, stopMonitoring }}>{children}</SessionContext.Provider>;
 }

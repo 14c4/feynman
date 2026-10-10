@@ -6,11 +6,13 @@ import { PracticeIcon } from '../../components/practice/PracticeIcon';
 import { useSessions } from '../../state/useSessions';
 import { ConversationList } from '../study/ConversationStatus';
 import type { AssessmentGrade, QuestionGrade } from '../../../shared/types';
+import { CONFIDENCE_LABELS } from '../../../shared/insights';
+import { ReadinessInsights } from '../insights/ReadinessInsights';
+import { MonitorPrompt } from '../insights/MonitorDock';
 import '../study/study.css';
 import './feedback.css';
 
 type ConceptOutcome = 'improved' | 'solid' | 'practice' | 'lower' | 'unchecked';
-const OUTCOME_LABELS: Record<ConceptOutcome, string> = { improved: 'Improved', solid: 'Solid both times', practice: 'Needs more practice', lower: 'Lower this time', unchecked: 'Not rechecked' };
 
 function outcome(before?: QuestionGrade, after?: QuestionGrade): ConceptOutcome {
   if (!after) return 'unchecked';
@@ -25,11 +27,6 @@ function ScoreBar({ grade, label }: { grade?: AssessmentGrade; label: string }) 
   return <span className="score-bar" role="img" aria-label={grade ? `${label}: ${grade.totalScore} of ${grade.maxScore}` : `${label}: no grade`}>
     {Array.from({ length: max }, (_, step) => <i key={step} className={grade && step < grade.totalScore ? 'is-on' : ''} style={{ animationDelay: `${step * 50}ms` }} />)}
   </span>;
-}
-
-function Dots({ grade }: { grade?: QuestionGrade }) {
-  if (!grade) return <span className="score-dots score-dots--empty" aria-label="Not graded">—</span>;
-  return <span className="score-dots" aria-label={`${grade.score} of ${grade.maxScore}`}>{Array.from({ length: grade.maxScore }, (_, step) => <i key={step} className={step < grade.score ? 'is-on' : ''} />)}</span>;
 }
 
 export function ResultsPage() {
@@ -69,14 +66,7 @@ export function ResultsPage() {
       {comparison && <p className="compare-note">{comparison} The follow-up used different questions on the same three concepts.</p>}
     </section>
 
-    <section aria-labelledby="concepts-heading" className="results-section">
-      <h2 id="concepts-heading">By concept</h2>
-      <ul className="concept-results">{concepts.map(({ concept, first, last, outcome: result }) => <li key={concept.id} className={`concept-result card concept-result--${result}`}>
-        <div className="concept-result-head"><strong>{concept.title}</strong><span className={`outcome outcome--${result}`}>{result === 'improved' && <PracticeIcon name="trend" size={13} strokeWidth={2} />}{OUTCOME_LABELS[result]}</span></div>
-        <div className="concept-result-scores"><span><small>Before</small><Dots grade={first} /></span><PracticeIcon name="arrow" size={14} /><span><small>After</small><Dots grade={last} /></span></div>
-        {last?.feedback && <p>{last.feedback}</p>}
-      </li>)}</ul>
-    </section>
+    <ReadinessInsights session={session} />
 
     <div className="results-split">
       <section className="takeaway card" aria-labelledby="stronger-heading">
@@ -101,7 +91,7 @@ export function ResultsPage() {
         <div className="disclosure-body answer-review">{session.attempts.map((attempt, attemptIndex) => <section key={attempt.id}><h4 className="review-title">{attempt.kind === 'baseline' ? 'First check' : `Follow-up check${attemptIndex > 1 ? ` ${attemptIndex}` : ''}`}</h4>{attempt.questions.map((question) => {
           const answer = attempt.answers.find((item) => item.questionId === question.id); const grade = attempt.grade?.questionGrades.find((item) => item.questionId === question.id);
           return <article key={question.id}><div className="review-q"><strong>{question.prompt}</strong>{grade && <span className="pill mono">{grade.score}/{grade.maxScore}</span>}</div>
-            <p>{answer?.skipped ? <em>Skipped</em> : answer?.text || <em>No answer saved</em>}{answer?.uncertain ? <span className="muted"> · Marked unsure</span> : ''}</p>
+            <p>{answer?.skipped ? <em>Skipped</em> : answer?.text || <em>No answer saved</em>}{answer?.confidence ? <span className="muted"> · {CONFIDENCE_LABELS[answer.confidence]}</span> : answer?.uncertain ? <span className="muted"> · Marked unsure</span> : ''}</p>
             {answer?.working && <p className="muted small">Working: {answer.working}</p>}
             {grade && <p className="review-feedback">{grade.feedback}</p>}</article>;
         })}</section>)}</div></details>
@@ -115,6 +105,8 @@ export function ResultsPage() {
       {session.nervousnessAfter === undefined && session.lifecycle === 'active' ? <div><div className="rating-scale">{([1, 2, 3, 4, 5] as const).map((value) => <button type="button" key={value} disabled={busy[sessionId]} aria-label={`Nervousness ${value} out of 5`} onClick={() => void setNervousness(sessionId, 'after', value).catch(() => undefined)}>{value}</button>)}</div><div className="rating-ends"><span>Not at all</span><span>Very</span></div></div>
         : session.nervousnessAfter === undefined && <p className="muted small">After: not recorded</p>}
     </section>
+
+    <MonitorPrompt session={session} />
 
     {(errors[sessionId] || session.operationError) && <p className="notice notice--danger" role="alert"><PracticeIcon name="alert" size={16} />{errors[sessionId] || session.operationError}</p>}
     <div className="results-actions">

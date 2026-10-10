@@ -1,108 +1,92 @@
-# feynman.ai — Current engineering contract
+# feynman.ai — Project guide for coding agents
 
-**Updated: 2026-10-10.** Source of truth for agents working on this repository. The original 33 KB roadmap was archived, unaltered, at [`docs/AGENTS-legacy-2026-10-10.md`](docs/AGENTS-legacy-2026-10-10.md) because it contained conflicting and superseded checkpoints. This file supersedes its instructions. `docs/functional-integration.md` contains the last OpenCode Stage 1 verification notes; `docs/claude-handoff-audit.md` records this uploaded-repository review. For Claude Code, also read `CLAUDE.md`.
+Read this first. It describes what exists today, how the code is organized, and how to work in it. `CLAUDE.md` adds Claude-specific notes. Older roadmaps and audits in `docs/` are historical context, not instructions.
 
-## Product and definition of done
+## Product vision
 
-**feynman.ai** is a low-pressure educational study app inspired by the Feynman Technique: the learner describes already-studied material, answers three baseline questions, explains weak concepts to Alex (an AI classmate), answers three matched follow-up questions, and receives a fair before/after comparison. Optional pre/post nervousness ratings are **self-report only**; there are no diagnostic or anxiety-reduction claims.
+feynman.ai is a study app built on the **Feynman Technique**: you understand something when you can explain it simply. The learner is the teacher; **Alex**, an AI classmate, is the student who listens, asks curious questions, and exposes gaps. A short check before and after teaching shows what actually changed.
 
-The **near-term milestone** is ONE correctly implemented local study cycle, not a prettier preview, broader product scope, durable infrastructure, or deployment:
+Core loop: `topic + optional notes/files → prepare 3 concepts → baseline (3 questions) → grade → teach Alex → matched recheck (3 new questions) → grade → results`.
 
-`topic + optional notes → prepare (or clarify) → baseline (3 questions) → grade → teaching → matched recheck (3 questions) → grade → actual results`
+It is an educational tool. Optional nervousness ratings are self-reported reflection only; never make diagnostic or treatment claims.
 
-Separate **code exists**, **tested with development mocks**, and **verified with real providers**. Never call a feature complete based solely on its presence in JSX, an API route, or a mocked screenshot.
+## What works today (implemented in code)
 
-## Current state: uploaded ZIP audit (2026-10-10)
+- **Session creation** — topic, description, notes, and up to 3 uploads (PDF/TXT/Markdown, 4 MB each, 8 MB total) with drag-and-drop. Text is extracted server-side (`unpdf`) and only bounded excerpts reach providers.
+- **Preparation** — Gemini generates a title, scope and 3 concepts, or asks one clarification question. Expected answers, rubrics and reserved recheck questions stay in a private server blueprint, never in client JSON.
+- **Assessments** — one question at a time with answer, optional working, "not sure" flag, skip, back/next, autosave (browser draft → debounced server PATCH), retry on failed save or grading. Each answered question is graded 0–2 by Gemini; skipped answers are not sent.
+- **Teaching Alex** — two channels:
+  - *Voice*: ElevenLabs agent via `@elevenlabs/react` with a server-issued signed URL and dynamic variables (`session_id`, `session_title`, `focus_context`, `opening_question`). Mic permission is requested before any signed URL. Transcripts are fetched from ElevenLabs history with bounded retry and honest `pending / ready / incomplete` status.
+  - *Text*: standalone server-backed conversation (Gemini `alexReply`), no microphone needed, 30-turn cap, retry for a failed reply.
+  - Alex avatar reflects real state (idle, connecting, listening, user speaking, thinking, responding, interrupted, ended); voice mode follows live audio volume.
+- **Recheck and results** — matched follow-up questions on the same concepts, before/after comparison, per-concept outcomes, "practise again" prefill on Home, expandable question feedback and transcripts, optional after-rating, finish.
+- **Session management** — history list with resume/review, multi-select delete, pause/resume, refresh recovery, read-only browser drafts when the server lost a session.
+- **DEV MOCK mode** — deterministic arithmetic fixtures, scripted labeled Alex text replies, voice disabled, and a labeled *test-only* teaching bypass. Only allowed with `NODE_ENV=development|test`; every mock surface is labeled.
+- **`/preview`** — isolated sample-data design preview; not part of the live loop and makes no API calls.
 
-| Area | Grounded status | Key files |
-| --- | --- | --- |
-| Live home + first assessment | Stage 1 integrated with backend; save/skip/uncertainty/back/next/pause and retry paths exist | `src/features/topics/HomePage.tsx`, `src/components/practice/`, `src/features/study/StudyPage.tsx`, `src/state/SessionProvider.tsx` |
-| Preparation + baseline grading | Server/provider implementations present. Gemini was checked previously in limited calls; no new live call during this audit | `server/routes.ts`, `server/providers.ts`, `server/domain.ts` |
-| DEV MOCK | Explicit, backend-only, deterministic arithmetic, fail-once scenarios; voice/history disabled | `server/developmentProviders.ts`, `tests/stage1.test.ts` |
-| Teaching voice | Existing ElevenLabs SDK hook + credential/registration/history endpoints, but a real spoken full cycle has **not** been verified | `src/features/study/StudyPage.tsx`, `server/providers.ts`, `server/routes.ts` |
-| Text alternative | Current `Use text instead` requires an **active voice connection**; not a standalone fallback | `src/features/study/StudyPage.tsx` |
-| Recheck + results | DEV MOCK full cycle (labeled test-only teaching bypass → matched recheck → mock grades → Results → finish) verified by API test and a manual browser run (P0, 2026-10-10). Real-provider recheck/results are still unverified | `server/routes.ts`, `src/features/study/StudyPage.tsx`, `src/features/feedback/ResultsPage.tsx` |
-| Preview | Separate attractive but sample-data-only `/preview`; not the live learning loop | `src/features/preview/` |
-| Persistence | Browser drafts and access references exist; API sessions are in a process-local Map. Restart **loses** sessions | `src/state/SessionProvider.tsx`, `server/store.ts` |
+**Limits worth knowing:** sessions live in a process-memory `Map` (`MemorySessionStore`); restarting the API loses them. Extra practice cycles (`POST /cycles`) return 501. No auth, rate limiting or durable storage yet. Automated tests use mocks only; real Gemini/ElevenLabs behavior is verified manually.
 
-Last OpenCode checkpoint reported typecheck/lint/build passing, 16 tests passing and Stage 1 browser checks. **In this ZIP audit** TypeScript typecheck and lint passed; test execution here was blocked by archived Windows-only esbuild binaries under `node_modules` when run on Linux, not by an observed application assertion failure. Run `npm ci` on the target machine if dependencies are incompatible.
+## Architecture
 
-## Next implementation order — small, reviewable vertical slices
+| Area | Files |
+| --- | --- |
+| Routes / pages | `src/app/App.tsx` — `/`, `/study/:sessionId`, `/results/:sessionId`, lazy `/preview/:screen?` |
+| Shell & navigation | `src/components/AppLayout.tsx`, `layout.css` (sidebar; focus bar + stepper during study) |
+| Home | `src/features/topics/HomePage.tsx`, `StudyComposer.tsx`, `home.css` |
+| Study flow | `src/features/study/StudyPage.tsx` (prep, overview, assessment, teaching), `QuestionCard.tsx`, `AlexAvatar.tsx`, `alexState.ts`, `ConversationStatus.tsx`, `stages.ts`, `study.css` |
+| Results | `src/features/feedback/ResultsPage.tsx`, `feedback.css` |
+| Design system | `src/styles/tokens.css` (colors, type, spacing, motion), `global.css` (buttons, fields, cards, badges, notices), `components/Button.tsx`, `components/practice/PracticeIcon.tsx` |
+| Browser state | `src/state/SessionProvider.tsx`, `useSessions.ts`, `sessionReducer.ts`; API client `src/services/practiceApi.ts` |
+| Shared contract | `shared/types.ts` (`PracticeSession`, `AssessmentAttempt`, `PracticeCycle`, `ConversationSegment`, limits) |
+| Backend | `server/index.ts`, `routes.ts` (all `/api` endpoints), `domain.ts` (validation, grading flow), `providers.ts` (Gemini + ElevenLabs), `developmentProviders.ts` (mock), `alex.ts` (persona/context), `materials.ts` (extraction), `store.ts` |
+| Tests | `tests/*.test.ts` via Node test runner (`npm test`); `tests/stage1.test.ts` covers the full mock cycle |
 
-### P0 — Complete the full **mock** non-voice flow (first)
+Unused legacy components remain in `src/features/study/` and `src/features/feedback/` (e.g. `MicrophoneControl`, `StudentAvatar` — the latter still used by `/preview`). `/preview` keeps its own `practice.css`.
 
-**Why:** The server supports `/recheck`, but the live UI deliberately stops at a `DEV MOCK` teaching checkpoint. That means baseline-to-results cannot be tested without real provider access.
+**Server environment** (backend only; never `VITE_`-prefixed): `GEMINI_API_KEY`, `GEMINI_MODEL` (default `gemini-2.5-flash`), `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID`, `PRACTICE_PROVIDER_MODE` (`real` default | `mock`), `MOCK_PROVIDER_SCENARIO` (`normal`, `clarification`, `prepare-error-once`, `grade-error-once`, `reply-error-once`), `MOCK_PROVIDER_DELAY_MS`, `PORT` (3001), `HOST`.
 
-Implement a **test-only, explicitly labeled teaching bypass** available solely when `session.providerMode === 'mock'` (never present a pretend teaching conversation as real). Use the existing authenticated recheck action. Connect the existing live `AssessmentView` to recheck questions, submit/grading/retry and `ResultsPage`, keeping all `DEV MOCK` labels on results and history. Reuse the existing API/state/contracts; do not create another session store.
+## Commands
 
-**Acceptance:** With no real credentials or network calls, a user can navigate topic → baseline → mock grading → labeled teaching bypass → matched recheck → mock grading → genuine server-backed (but clearly mock-graded) Results; refresh/error/skip paths still work. Add API integration coverage from create through finish and a browser smoke test. No secret keys needed and no fake transcripts.
-
-### P1 — Independent text-only teaching path (after P0)
-
-Implement an actual text-conversation mode **without microphone, ElevenLabs, or signed voice URL requirements**. Design a bounded server-backed provider interface that supports the existing weak-concept context, meaningful one-question-at-a-time teaching, per-turn history and explicit mock-vs-real labels. Reuse existing session and transcript contracts as appropriate; avoid a second conflicting domain store. In mock use deterministic scripted *clearly identified test messages*; in real mode use an approved provider, subject to rate limits and approval for credits. Test input validation, interruptions, and recovery. Do not call a disconnected ElevenLabs WebSocket a "text fallback."
-
-**Acceptance:** An ordinary user can actually type an explanation and receive relevant responses, even when microphone permission is denied. Test mode makes no provider calls; real behavior is verified only with explicit permission.
-
-### P2 — Real ElevenLabs voice and transcript lifecycle (after P0; can be developed separately from P1)
-
-Verify a private Alex agent with configured dynamic variables `session_id`, `session_title`, `focus_context`, `opening_question`. Keep `ELEVENLABS_API_KEY` and `ELEVENLABS_AGENT_ID` backend-only. Use the existing `@elevenlabs/react` conversation hook and server-issued signed URL. Map real connect/error/listening/speaking/mute/disconnect events honestly.
-
-**Known issue:** The current onDisconnect handler fires one best-effort finalization and discards errors. It may fetch history before ElevenLabs has finished processing; `startRecheck` does not await final transcript readiness. Implement bounded status-aware retry/reconciliation and explicit `pending`/`incomplete`/`ready` UI, with a recoverable action after navigation/refresh. Do not block all study progress indefinitely for third-party history, but do not label an incomplete transcript 'saved.' Verify permission denial, disconnect, restart and duplicate callbacks.
-
-**Acceptance:** Real spoken conversation with relevant concept prompts; transcripts persist and can be re-retrieved, with truthful status and no fabricated turns. Real verification requires permission for provider calls.
-
-### P3 — Reliability after one full cycle is demonstrated
-
-- Gemini: a baseline and recheck currently grade each non-skipped response independently via `Promise.all`; consider bounded batch grading to reduce quota/cost **only with validated per-question evidence and consistent 0–2 scoring**.
-- Handle 429/503/timeout distinctly, bound retries, avoid duplicate cost-bearing in-flight requests and preserve submitted answers.
-- Add durability (`SessionStore` backed by persistent storage) before production/serverless hosting; a browser local draft does not restore a restarted backend.
-- Add resource caps, authorization/rate limits, usage monitoring, secret isolation and provider budget protection before public beta.
-- Test the complete deployed flow only after local functionality works. Vercel deployment cannot simply rely on the current in-memory Node process.
-
-## Architectural map
-
-- **Frontend:** React 19 + TypeScript + Vite + React Router. Live `/`, `/study/:sessionId`, `/results/:sessionId`; isolated lazy `/preview/:screen?`.
-- **Presentation:** `src/components/practice/` shared assessment primitives; legacy live conversation/results presentation in `src/features/study/` and `src/features/feedback/`.
-- **Browser state:** `src/state/SessionProvider.tsx`, `useSessions.ts`, reducer; `src/services/practiceApi.ts` fetches `/api` routes.
-- **Shared contract:** `shared/types.ts`; use `PracticeSession`, `PracticeCycle`, `AssessmentAttempt`, provider mode, lifecycle/stages. Avoid changing contracts without tests and coordinated updates.
-- **Backend:** `server/index.ts`, `server/routes.ts`, `server/domain.ts`, `server/providers.ts`, `server/developmentProviders.ts`, `server/store.ts`. Questions' expected answers, rubrics and reserved rechecks stay in private blueprints, never client JSON.
-- **Tests:** `tests/*.test.ts`, including `tests/stage1.test.ts`; use Node's test runner via `npm test`.
-
-## Development commands
-
-Node >=22.12 and package scripts in `package.json`:
+Node ≥ 22.12.
 
 ```powershell
-# Terminal 1 — explicitly isolated mock API (development only)
-$env:NODE_ENV = 'development'
-$env:PRACTICE_PROVIDER_MODE = 'mock'
-npm run dev:server
-
-# Terminal 2 — Vite frontend
-npm run dev
+# Mock API (no credits spent). Without PRACTICE_PROVIDER_MODE=mock, real providers are used.
+$env:NODE_ENV = 'development'; $env:PRACTICE_PROVIDER_MODE = 'mock'; npm run dev:server
+npm run dev          # Vite frontend, proxies /api to PORT (default 3001)
 ```
-
-The live app is `/`; `/preview` is isolated sample UI. Without `PRACTICE_PROVIDER_MODE=mock`, **real is the default** and API calls may spend Gemini/ElevenLabs credits. To test a known mock error set `MOCK_PROVIDER_SCENARIO=prepare-error-once` or `grade-error-once` before restarting API; refer to `docs/functional-integration.md` for options.
 
 ```sh
-npm run typecheck
-npm run lint
-npm test
-npm run build
+npm run typecheck && npm run lint && npm test && npm run build
 ```
 
-Do not treat a passing unit test as proof of live ElevenLabs connectivity. Do not run real provider calls, automated browser tests that hit real providers, or make deployment/billing changes without explicit permission. If dependency binaries originate from another OS, reinstall with `npm ci` on the current machine before attributing runtime loader errors to code.
+`dev:server` loads `.env` if present; run `npx tsx server/index.ts` with explicit env vars to guarantee no keys are loaded. If dependencies came from another OS, run `npm ci` before blaming the code.
 
-## Safety, teamwork and change control
+## Design philosophy
 
-1. Check `git status --short` and `git diff` **before touching files**; preserve all uncommitted teammate work. Never auto-commit, push, force, merge, or deploy. Keep changed files tightly scoped.
-2. Favor a single agent for shared `server/routes.ts`, `shared/types.ts`, `SessionProvider.tsx` changes. Parallel agents may inspect/review, but simultaneous edits require isolated worktrees and file ownership.
-3. Do not expose API keys, bearer session tokens, signed URLs, reserved questions, private blueprints, or user notes/transcripts in logs, screenshots or answers. The original uploaded ZIP included a populated `.env`; **never republish that ZIP**.
-4. Keep mock mode explicitly non-production (`NODE_ENV=development|test`) and source-labeled in every relevant live view. Never pass mock scores off as Gemini grades. Maintain user-facing recovery messages and preserve drafts on failures.
-5. Do not make health diagnosis/treatment claims or infer emotional state from quiz grades. Report optional nervousness as user-provided data only.
-6. Separate code behavior, test evidence and open hypotheses in every report. Do not rewrite architecture, install frameworks, or redesign screens to avoid a small integration issue.
-7. When the user gives an implementation task, carry out that **approved task** and then stop at a demonstrable checkpoint; don't impose historical approval gates or autonomously expand into unrelated stages.
+- Modern, minimal, calm: inspired by Brilliant's learning clarity, Speak's conversational immersion and Linear's precision, with an original green identity.
+- One primary action per screen; one question at a time; navigation recedes during a study session.
+- The teacher/student relationship must be obvious: the user explains, Alex asks.
+- Build from shared tokens and primitives, not per-page styling. Restrained motion that communicates state and respects `prefers-reduced-motion`.
+- Responsive (phone → desktop), keyboard accessible, visible focus, labeled fields.
+- Every visible control must work. No decorative buttons, fake data, fake transcripts, or artificial delays in the live app.
 
-## Task completion template
+## Future direction (product context, not a task list)
 
-Record: **goal / exact changed files / behavior now working / mocked or unverified pieces / checks run and pass/fail / next smallest task**. Keep `docs/functional-integration.md` and this checkpoint current only when corresponding code is actually changed. The archived roadmap is historical and should not be modified.
+None of these are implemented. Work on them only when the user asks.
+
+- Longer and timed assessments; exam-style practice and better exam-readiness signals.
+- Confidence tracking per answer and per concept over time.
+- Presage SmartSpectra integration for optional camera-based physiological signals, and physiological insights shown alongside study results — framed as reflective data, not health diagnosis, and only with explicit user consent.
+- Multiple practice cycles on weak concepts, durable storage, auth, rate limits and provider budget protection before any public deployment.
+
+## Development guidelines
+
+1. **Do the current task.** The user's request outranks this roadmap and any older plan in `docs/`. Don't expand scope on your own.
+2. **Preserve working functionality.** Reuse existing state, services and contracts; don't rewrite working logic to fit a new idea. Change `shared/types.ts`, `server/routes.ts` or `SessionProvider.tsx` carefully and keep tests passing.
+3. **Prefer small, direct changes** over new architecture, frameworks or dependencies.
+4. **Check proportionately.** Run typecheck/lint/tests/build once when finishing a meaningful change, not after every edit. Skip repetitive audits; a browser walkthrough in mock mode is enough for UI work.
+5. **Protect secrets and private data.** Never print or commit `.env`, keys, signed URLs, session tokens, blueprints, or user notes/transcripts. Don't redistribute the original uploaded ZIP (it contained `.env`).
+6. **Keep mock and real honest.** Mock stays opt-in, labeled `DEV MOCK`, and impossible in production. Never present mock grades, scripted replies or missing transcripts as real.
+7. **Ask before spending or shipping.** No paid provider calls, commits, pushes, deploys or billing changes without explicit permission.
+8. **Respect teammates' work.** Check `git status` before editing and keep uncommitted changes intact.
+9. **Report briefly:** what works now, what was verified (and whether real providers were called), what doesn't work, files changed.
