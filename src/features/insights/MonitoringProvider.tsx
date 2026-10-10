@@ -122,7 +122,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       if (current.cancelled) return;
       const summary = tracker.store.summary(performance.now());
       setState((previous) => sameSummary(previous.tracking, summary) ? previous : { ...previous, tracking: summary });
-    }, 250);
+    }, 500);
   }, []);
 
   /** Opens the camera and a hidden <video> that keeps frames flowing for capture and tracking. */
@@ -173,7 +173,6 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       // Ask for the camera before opening a server window, so a denial (or an unusable camera) costs nothing.
       const { media, video, track } = await openCamera();
       setState((previous) => ({ ...previous, cameraOn: true }));
-      startTracking(video);
 
       // Negotiate: measure what each configuration really delivers, rather than trusting advertised settings.
       const results: ProbeResult[] = [];
@@ -223,6 +222,8 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       capture.encoding = step.encoding;
       current.capture = capture;
       capture.start();
+      // Started only now: the face box must not compete with the camera-rate probe or with frame capture.
+      startTracking(video);
 
       const controller = new RecoveryController();
       let lastDrops = 0;

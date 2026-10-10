@@ -1,23 +1,24 @@
-import type { FaceLandmarker, FaceLandmarkerOptions } from '@mediapipe/tasks-vision';
+import type { FaceDetector, FaceDetectorOptions } from '@mediapipe/tasks-vision';
 import wasmLoaderPath from '@mediapipe/tasks-vision/vision_wasm_internal.js?url';
 import wasmBinaryPath from '@mediapipe/tasks-vision/vision_wasm_internal.wasm?url';
-import { BlinkCounter, boundsOf, framingFor, headPose, type FaceObservation, type Framing, type HeadPose } from './faceGeometry';
+import { framingFor, type FaceObservation, type Framing } from './faceGeometry';
 
 /*
- * Local, real-time face tracking for the Presage camera panel (MediaPipe Face Landmarker).
+ * Minimal on-device face box for the Presage camera panel (MediaPipe Face Detector, BlazeFace).
  *
  * It runs entirely in this browser tab: nothing it sees is uploaded. Presage SmartSpectra stays
- * the source of every physiological reading; this tracker only drives the on-screen face square,
- * landmark dots, framing and lighting feedback, and a local blink count. The WebAssembly runtime
- * and model are served by this app, so no third-party request is made while the camera is on.
+ * the source of every physiological reading; this only draws the face square and gives basic
+ * framing and lighting hints. It is deliberately small (a ~230 KB model, no landmark mesh) and
+ * runs only a few times a second, so it never competes with frame capture for the main thread.
+ * The model and WebAssembly runtime are served by this app, so no third-party request is made.
  */
 
-const MODEL_PATH = `${import.meta.env.BASE_URL}models/face_landmarker.task`;
-/** Analysis rate cap; the camera preview itself always runs at full rate. */
-const MIN_INTERVAL_MS = 45;
+const MODEL_PATH = `${import.meta.env.BASE_URL}models/blaze_face_short_range.tflite`;
+/** Analysis rate cap (~10 per second); the camera preview itself always runs at full rate. */
+const MIN_INTERVAL_MS = 100;
 /** No face for this long after having one counts as lost tracking (not a momentary miss). */
-const LOST_AFTER_MS = 700;
-const BRIGHTNESS_EVERY_MS = 400;
+const LOST_AFTER_MS = 900;
+const BRIGHTNESS_EVERY_MS = 500;
 
 export type TrackerStatus = 'loading' | 'ready' | 'unavailable';
 
@@ -27,11 +28,6 @@ export interface TrackingSummary {
   face: 'none' | 'found' | 'lost';
   faces: number;
   framing?: Framing;
-  pose?: HeadPose;
-  blinksPerMinute?: number;
-  /** Tracker analyses per second. */
-  analysisFps?: number;
-  delegate?: 'GPU' | 'CPU';
   error?: string;
 }
 
@@ -41,22 +37,13 @@ export class TrackingStore {
   face: TrackingSummary['face'] = 'none';
   faces = 0;
   status: TrackerStatus = 'loading';
-  delegate?: 'GPU' | 'CPU';
   error?: string;
-  readonly blinks = new BlinkCounter();
   private lastSeen?: number;
-  private runs: number[] = [];
 
   record(observation: FaceObservation | undefined, now: number) {
-    this.runs.push(now); while (this.runs.length && now - this.runs[0]! > 2000) this.runs.shift();
     this.faces = observation?.faces ?? 0;
-    if (observation) {
-      this.latest = observation; this.lastSeen = now; this.face = 'found';
-      this.blinks.push(now, observation.eyeClosure);
-    } else if (this.lastSeen !== undefined && now - this.lastSeen > LOST_AFTER_MS) {
-      if (this.face === 'found') this.blinks.interrupt();
-      this.face = 'lost';
-    }
+    if (observation) { this.latest = observation; this.lastSeen = now; this.face = 'found'; }
+    else if (this.lastSeen !== undefined && now - this.lastSeen > LOST_AFTER_MS) this.face = 'lost';
   }
 
   /** The face is currently in view (a brief miss under LOST_AFTER_MS still counts as tracked). */
@@ -65,35 +52,21 @@ export class TrackingStore {
   summary(now: number): TrackingSummary {
     const latest = this.latest;
     const showing = this.tracked(now) && latest;
-    const fps = this.runs.length > 2 ? Math.round(((this.runs.length - 1) * 1000) / (this.runs.at(-1)! - this.runs[0]!)) : undefined;
     return {
       // A stalled analysis loop (no recent results) must not keep claiming a tracked face.
       tracker: this.status, face: this.face === 'found' && !this.tracked(now) ? 'lost' : this.face, faces: this.faces,
-      framing: showing ? framingFor(latest) : undefined,
-      pose: showing ? { yaw: Math.round(latest.pose.yaw), pitch: Math.round(latest.pose.pitch), roll: Math.round(latest.pose.roll) } : undefined,
-      blinksPerMinute: this.blinks.perMinute(now), analysisFps: fps, delegate: this.delegate, error: this.error,
+      framing: showing ? framingFor(latest) : undefined, error: this.error,
     };
   }
 }
 
-let indicesCache: Uint16Array | undefined;
-/** Landmark indices for the face outline, eyes, brows, irises and lips: enough to show tracking without a mesh. */
-function outlineIndices(statics: typeof FaceLandmarker) {
-  if (indicesCache) return indicesCache;
-  const set = new Set<number>();
-  for (const list of [statics.FACE_LANDMARKS_FACE_OVAL, statics.FACE_LANDMARKS_LEFT_EYE, statics.FACE_LANDMARKS_RIGHT_EYE, statics.FACE_LANDMARKS_LEFT_EYEBROW, statics.FACE_LANDMARKS_RIGHT_EYEBROW, statics.FACE_LANDMARKS_LEFT_IRIS, statics.FACE_LANDMARKS_RIGHT_IRIS, statics.FACE_LANDMARKS_LIPS])
-    for (const connection of list) { set.add(connection.start); set.add(connection.end); }
-  indicesCache = Uint16Array.from([...set].sort((a, b) => a - b));
-  return indicesCache;
-}
-
 /**
- * Runs the tracker against a playing <video> on animation frames until stopped. Resolves once
- * the model is loaded (or marks the store unavailable if it can't load; Presage keeps running).
+ * Runs the detector against a playing <video> until stopped. If the model can't load, the store
+ * is marked unavailable and Presage keeps running without the on-screen box.
  */
 export class FaceTrackLoop {
   readonly store = new TrackingStore();
-  private landmarker?: FaceLandmarker;
+  private detector?: FaceDetector;
   private handle?: number;
   private stopped = false;
   private lastRun = 0;
@@ -101,7 +74,6 @@ export class FaceTrackLoop {
   private lastTimestamp = 0;
   private lastBrightness = 0;
   private brightness?: number;
-  private indices?: Uint16Array;
   private probe?: CanvasRenderingContext2D | null;
 
   constructor(private readonly video: HTMLVideoElement) {}
@@ -109,16 +81,11 @@ export class FaceTrackLoop {
   async start() {
     try {
       const vision = await import('@mediapipe/tasks-vision');
-      const options = (delegate: 'GPU' | 'CPU'): FaceLandmarkerOptions => ({
-        baseOptions: { modelAssetPath: MODEL_PATH, delegate }, runningMode: 'VIDEO', numFaces: 2,
-        outputFaceBlendshapes: true, outputFacialTransformationMatrixes: true,
-        minFaceDetectionConfidence: 0.5, minFacePresenceConfidence: 0.5, minTrackingConfidence: 0.5,
-      });
+      const options = (delegate: 'GPU' | 'CPU'): FaceDetectorOptions => ({ baseOptions: { modelAssetPath: MODEL_PATH, delegate }, runningMode: 'VIDEO', minDetectionConfidence: 0.5 });
       const fileset = { wasmLoaderPath, wasmBinaryPath };
-      try { this.landmarker = await vision.FaceLandmarker.createFromOptions(fileset, options('GPU')); this.store.delegate = 'GPU'; }
-      catch { this.landmarker = await vision.FaceLandmarker.createFromOptions(fileset, options('CPU')); this.store.delegate = 'CPU'; }
-      if (this.stopped) { this.landmarker.close(); return; }
-      this.indices = outlineIndices(vision.FaceLandmarker);
+      try { this.detector = await vision.FaceDetector.createFromOptions(fileset, options('GPU')); }
+      catch { this.detector = await vision.FaceDetector.createFromOptions(fileset, options('CPU')); }
+      if (this.stopped) { this.detector.close(); return; }
       this.store.status = 'ready';
       this.handle = requestAnimationFrame(this.tick);
     } catch (error) {
@@ -130,11 +97,11 @@ export class FaceTrackLoop {
   stop() {
     this.stopped = true;
     if (this.handle !== undefined) cancelAnimationFrame(this.handle);
-    this.landmarker?.close(); this.landmarker = undefined;
+    this.detector?.close(); this.detector = undefined;
   }
 
   private tick = () => {
-    if (this.stopped || !this.landmarker) return;
+    if (this.stopped || !this.detector) return;
     this.handle = requestAnimationFrame(this.tick);
     const now = performance.now();
     const video = this.video;
@@ -143,33 +110,14 @@ export class FaceTrackLoop {
     // MediaPipe requires strictly increasing timestamps.
     const timestamp = Math.max(this.lastTimestamp + 1, Math.round(now));
     this.lastTimestamp = timestamp;
-    let result;
-    try { result = this.landmarker.detectForVideo(video, timestamp); } catch { return; }
-    const faces = result.faceLandmarks;
-    if (!faces.length) { this.store.record(undefined, now); return; }
+    let detections;
+    try { detections = this.detector.detectForVideo(video, timestamp).detections; } catch { return; }
     // The largest face is the learner; others only trigger the "more than one face" note.
-    let primary = 0; let largest = -1;
-    const allBounds = faces.map((landmarks) => {
-      const flat = new Float32Array(landmarks.length * 2);
-      landmarks.forEach((point, index) => { flat[index * 2] = point.x; flat[index * 2 + 1] = point.y; });
-      return boundsOf(flat);
-    });
-    allBounds.forEach((bounds, index) => { const area = bounds.w * bounds.h; if (area > largest) { largest = area; primary = index; } });
-    const landmarks = faces[primary]!;
-    const indices = this.indices!;
-    const points = new Float32Array(indices.length * 2);
-    indices.forEach((landmark, index) => { const point = landmarks[landmark]; if (point) { points[index * 2] = point.x; points[index * 2 + 1] = point.y; } });
-    const shapes = result.faceBlendshapes?.[primary]?.categories ?? [];
-    const score = (name: string) => shapes.find((category) => category.categoryName === name)?.score ?? 0;
-    const matrix = result.facialTransformationMatrixes?.[primary]?.data;
-    const bounds = allBounds[primary]!;
+    const boxes = detections.flatMap((detection) => detection.boundingBox ? [{ x: detection.boundingBox.originX / video.videoWidth, y: detection.boundingBox.originY / video.videoHeight, w: detection.boundingBox.width / video.videoWidth, h: detection.boundingBox.height / video.videoHeight }] : []);
+    if (!boxes.length) { this.store.record(undefined, now); return; }
+    const bounds = boxes.reduce((best, box) => (box.w * box.h > best.w * best.h ? box : best));
     if (now - this.lastBrightness >= BRIGHTNESS_EVERY_MS) { this.lastBrightness = now; this.brightness = this.sampleBrightness(bounds) ?? this.brightness; }
-    this.store.record({
-      at: now, faces: faces.length, bounds, points,
-      pose: matrix ? headPose(matrix) : { yaw: 0, pitch: 0, roll: 0 },
-      eyeClosure: (score('eyeBlinkLeft') + score('eyeBlinkRight')) / 2,
-      brightness: this.brightness,
-    }, now);
+    this.store.record({ at: now, faces: boxes.length, bounds, brightness: this.brightness }, now);
   };
 
   /** Mean luma of the face region from a 16×16 downsample: a cheap, local lighting check. */
