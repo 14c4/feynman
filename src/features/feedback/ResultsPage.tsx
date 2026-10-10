@@ -9,7 +9,6 @@ import type { AssessmentGrade, QuestionGrade } from '../../../shared/types';
 import { CONFIDENCE_LABELS } from '../../../shared/insights';
 import { ReadinessInsights } from '../insights/ReadinessInsights';
 import { PresagePanel } from '../insights/PresagePanel';
-import { MonitorPrompt } from '../insights/MonitorDock';
 import { ReviewSheetPanel } from './ReviewSheet';
 import '../study/study.css';
 import './feedback.css';
