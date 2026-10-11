@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLocation } from 'react-router';
 import type { MonitoringPurpose, MonitoringStatus } from '../../../shared/types';
+import { PracticeApiError } from '../../services/practiceApi';
 import { useSessions } from '../../state/useSessions';
 import { MonitorContext, type MonitorState } from './monitoringContext';
 import {
-  batchLength, CAMERA_LADDER, constraintsFor, GOOD_FPS, initialProcessingStep, MAX_QUEUE_MS, MIN_FPS, packBatch, pickConfig,
-  PROCESSING_STEPS, RecoveryController, TARGET_FPS, type CameraConfig, type ProbeResult,
+  batchLength, CAMERA_LADDER, constraintsFor, GOOD_FPS, HEALTHY_RESET_MS, initialProcessingStep, MAX_QUEUE_MS, MIN_FPS, packBatch, pickConfig,
+  PROCESSING_STEPS, RecoveryController, retryDelay, STALL_MS, TARGET_FPS, type CameraConfig, type ProbeResult,
 } from './cameraPipeline';
 import { FrameCapture, probeFps, type CapturedFrame } from './frameCapture';
 import { FaceTrackLoop, type TrackingStore, type TrackingSummary } from './faceTracker';
@@ -17,6 +18,20 @@ function cameraError(error: unknown): string {
   if (name === 'NotReadableError') return 'Your camera is being used by another app. Close it and try again.';
   return 'The camera could not be started. Presage is optional; you can keep studying without it.';
 }
+
+/** A failure starting Presage; `fatal` means retrying cannot help, so the learner sees it instead. */
+class StartError extends Error {
+  constructor(message: string, readonly fatal: boolean) { super(message); }
+}
+/** Blocked, missing or unsupported cameras need the learner; a busy or glitching camera may free up. */
+const FATAL_CAMERA_ERRORS = new Set(['NotAllowedError', 'SecurityError', 'NotFoundError']);
+/** Server answers that a new window cannot change. */
+const FATAL_API_CODES = new Set(['MONITORING_UNAVAILABLE', 'UNAUTHORIZED', 'NOT_FOUND', 'INVALID_STAGE']);
+function isFatal(error: unknown) {
+  if (error instanceof StartError) return error.fatal;
+  return error instanceof PracticeApiError && Boolean(error.code && FATAL_API_CODES.has(error.code));
+}
+const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
 
 interface Loop {
   capture?: FrameCapture;
@@ -31,6 +46,8 @@ interface Loop {
   inFlight: boolean;
   failures: number;
   cancelled: boolean;
+  /** Removes the camera-disconnect listener. */
+  unwatch?: () => void;
   lastStatus?: MonitoringStatus;
 }
 const newLoop = (): Loop => ({ queue: [], queueDrops: 0, inFlight: false, failures: 0, cancelled: false });
@@ -57,13 +74,19 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
   const [tracking, setTracking] = useState<TrackingStore>();
   const loop = useRef<Loop>(newLoop());
   const live = useRef<{ sessionId?: string; windowId?: string; stream?: MediaStream }>({});
+  /** What the learner turned on. While set, failures restart Presage instead of ending it. */
+  const intent = useRef<{ sessionId: string; purpose: MonitoringPurpose; checkinEndsAt?: number }>(undefined);
+  const retry = useRef<{ attempt: number; timer?: ReturnType<typeof setTimeout>; onVisible?: () => void }>({ attempt: 0 });
+  const beginRef = useRef<(sessionId: string, purpose: MonitoringPurpose, checkinSeconds?: number) => Promise<void>>(undefined);
   const location = useLocation();
 
   const release = useCallback(() => {
     const current = loop.current;
     current.cancelled = true;
     current.capture?.stop(); current.tracker?.stop();
-    clearInterval(current.heartbeat); clearInterval(current.recovery); clearInterval(current.summary); clearTimeout(current.checkin);
+    clearInterval(current.heartbeat); clearInterval(current.recovery); clearInterval(current.summary); clearTimeout(current.checkin); current.unwatch?.();
+    clearTimeout(retry.current.timer); retry.current.timer = undefined;
+    if (retry.current.onVisible) { document.removeEventListener('visibilitychange', retry.current.onVisible); retry.current.onVisible = undefined; }
     if (current.video) { current.video.pause(); current.video.srcObject = null; current.video.remove(); }
     live.current.stream?.getTracks().forEach((track) => track.stop());
     loop.current = newLoop();
@@ -75,27 +98,78 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
     setState({ phase: error ? 'error' : 'idle', sessionId, error, finished: status ? { sessionId, valid: samples.filter((sample) => sample.valid).length, total: samples.length, reason: status.window.status === 'error' ? status.window.endReason : undefined, source: status.window.source } : undefined });
   }, []);
 
-  const stop = useCallback(async (reason?: 'camera_too_slow') => {
+  /** The learner's stop (or leaving the session): ends the window and any automatic restarts. */
+  const stop = useCallback(async () => {
+    intent.current = undefined; retry.current.attempt = 0;
     const { sessionId, windowId } = live.current;
     release();
     live.current = {};
-    if (!sessionId || !windowId) { setState((previous) => ({ ...previous, phase: 'idle', tracking: undefined })); return; }
+    if (!sessionId || !windowId) { setState((previous) => ({ ...previous, phase: 'idle', tracking: undefined, retry: undefined })); return; }
     setState((previous) => ({ ...previous, phase: 'stopping' }));
     try {
-      const status = await stopMonitoring(sessionId, windowId, reason);
-      finish(status, sessionId, reason ? status.window.endReason : undefined);
+      const status = await stopMonitoring(sessionId, windowId);
+      finish(status, sessionId);
     } catch { finish(undefined, sessionId, 'Presage stopped, but the server could not confirm it. Readings received so far are kept.'); }
   }, [finish, release, stopMonitoring]);
+
+  /** Ends Presage with a message the learner needs to see; no automatic restart follows. */
+  const fail = useCallback((sessionId: string, error: string) => {
+    intent.current = undefined; retry.current.attempt = 0;
+    release(); live.current = {};
+    setState({ phase: 'error', sessionId, error });
+  }, [release]);
+
+  /**
+   * Something a fresh start can fix went wrong: close this window (its readings are kept), wait
+   * with backoff, then start again on its own. A background tab waits until it is visible again,
+   * since most browsers stop delivering camera frames to hidden pages.
+   */
+  const recover = useCallback((reason: string, slow = false) => {
+    const target = intent.current;
+    if (!target) return;
+    const { sessionId, windowId } = live.current;
+    release(); live.current = {};
+    if (sessionId && windowId) void stopMonitoring(sessionId, windowId, slow ? 'camera_too_slow' : undefined).catch(() => undefined);
+    const attempt = retry.current.attempt++;
+    const delay = retryDelay(attempt, slow);
+    setState((previous) => ({ phase: 'reconnecting', sessionId: target.sessionId, purpose: target.purpose, source: previous.source, retry: { attempt: attempt + 1, at: Date.now() + delay, reason } }));
+    const resume = () => {
+      retry.current.timer = undefined;
+      if (intent.current !== target) return;
+      if (document.visibilityState === 'hidden') {
+        setState((previous) => previous.phase === 'reconnecting' && previous.retry ? { ...previous, retry: { ...previous.retry, waitingForTab: true } } : previous);
+        const onVisible = () => {
+          if (document.visibilityState !== 'visible') return;
+          document.removeEventListener('visibilitychange', onVisible); retry.current.onVisible = undefined;
+          resume();
+        };
+        retry.current.onVisible = onVisible;
+        document.addEventListener('visibilitychange', onVisible);
+        return;
+      }
+      const remaining = target.checkinEndsAt ? Math.ceil((target.checkinEndsAt - Date.now()) / 1000) : undefined;
+      if (remaining !== undefined && remaining <= 0) { intent.current = undefined; setState({ phase: 'idle', sessionId: target.sessionId }); return; }
+      void beginRef.current?.(target.sessionId, target.purpose, remaining);
+    };
+    retry.current.timer = setTimeout(resume, delay);
+  }, [release, stopMonitoring]);
 
   /** Applies a status from the server to the panel, or closes the window if the server ended it. */
   const applyStatus = useCallback((status: MonitoringStatus, sessionId: string, windowId: string) => {
     const current = loop.current;
+    // A late reply for a window that has since been replaced (after a restart) is ignored.
+    if (current.cancelled || live.current.windowId !== windowId) return;
     current.failures = 0; current.lastStatus = status;
-    if (current.cancelled) return;
-    if (status.window.status !== 'active') { release(); live.current = {}; finish(status, sessionId, status.window.status === 'error' ? status.window.endReason ?? 'Presage stopped.' : undefined); return; }
+    if (status.window.status !== 'active') {
+      // The server ended the window without the learner asking: start a new one unless retrying cannot help.
+      if (intent.current && !status.window.fatal) { recover(status.window.endReason ?? 'Presage stopped.'); return; }
+      if (status.window.fatal) { intent.current = undefined; retry.current.attempt = 0; }
+      release(); live.current = {}; finish(status, sessionId, status.window.status === 'error' ? status.window.endReason ?? 'Presage stopped.' : undefined); return;
+    }
     const valid = status.window.samples.some((sample) => sample.valid);
+    if (valid) retry.current.attempt = 0;
     setState((previous) => previous.windowId === windowId ? { ...previous, status, phase: valid ? 'monitoring' : 'calibrating' } : previous);
-  }, [finish, release]);
+  }, [finish, recover, release]);
 
   /** Sends queued frames in capture order, one request at a time, as soon as the last one returns. */
   const pump = useCallback((sessionId: string, windowId: string) => {
@@ -107,9 +181,9 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
     void sendFrames(sessionId, windowId, packBatch(batch), first.width, first.height, current.capture?.camera.fps(), first.encoding)
       .then((status) => applyStatus(status, sessionId, windowId))
       .catch(() => {
-        if (++current.failures >= 5 && !current.cancelled) { release(); live.current = {}; finish(undefined, sessionId, 'The connection to the server was lost, so Presage stopped. Readings received before that are kept.'); }
+        if (++current.failures >= 5 && !current.cancelled) recover('The connection to the server was lost.');
       }).finally(() => { current.inFlight = false; pump(sessionId, windowId); });
-  }, [applyStatus, finish, release, sendFrames]);
+  }, [applyStatus, recover, sendFrames]);
 
   /** Starts the local face tracker on the hidden video and publishes a summary a few times a second. */
   const startTracking = useCallback((video: HTMLVideoElement) => {
@@ -127,7 +201,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
 
   /** Opens the camera and a hidden <video> that keeps frames flowing for capture and tracking. */
   const openCamera = useCallback(async () => {
-    if (!navigator.mediaDevices?.getUserMedia) throw new Error('This browser cannot use a camera on this page.');
+    if (!navigator.mediaDevices?.getUserMedia) throw new StartError('This browser cannot use a camera on this page.', true);
     // Like Presage's reference app: ask for HD at a hard 25 fps minimum first, then relax. Only a
     // permission or device error ends the attempts; an unsatisfiable constraint just moves on.
     const first = CAMERA_LADDER[0]!;
@@ -142,7 +216,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       try { media = await navigator.mediaDevices.getUserMedia(constraints); break; }
       catch (error) { failure = error; if (!(error instanceof DOMException) || error.name !== 'OverconstrainedError') break; }
     }
-    if (!media) throw new Error(cameraError(failure));
+    if (!media) throw new StartError(cameraError(failure), failure instanceof DOMException && FATAL_CAMERA_ERRORS.has(failure.name));
     live.current = { stream: media };
     setStream(media);
     const video = document.createElement('video');
@@ -151,14 +225,20 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
     Object.assign(video.style, { position: 'fixed', width: '2px', height: '2px', opacity: '0', pointerEvents: 'none', left: '0', top: '0' });
     document.body.append(video);
     await video.play().catch(() => undefined);
-    loop.current.video = video;
-    return { media, video, track: media.getVideoTracks()[0]! };
-  }, []);
+    const current = loop.current;
+    current.video = video;
+    const track = media.getVideoTracks()[0]!;
+    // Unplugged, taken by another app, or the computer slept: start over once it is back.
+    const onEnded = () => { if (!current.cancelled) recover('The camera was disconnected.'); };
+    track.addEventListener('ended', onEnded);
+    current.unwatch = () => track.removeEventListener('ended', onEnded);
+    return { media, video, track };
+  }, [recover]);
 
-  const start = useCallback(async (sessionId: string, purpose: MonitoringPurpose, checkinSeconds?: number) => {
+  /** One attempt at starting Presage. Failures go to `recover` (retry) or `fail` (needs the learner). */
+  const begin = useCallback(async (sessionId: string, purpose: MonitoringPurpose, checkinSeconds?: number) => {
     const health = integration?.physiology;
-    if (!health?.available) { setState({ phase: 'error', sessionId, error: health?.reason ?? 'Presage is unavailable on this server.' }); return; }
-    if (live.current.windowId) await stop();
+    if (!health?.available) { fail(sessionId, health?.reason ?? 'Presage is unavailable on this server.'); return; }
     setState({ phase: 'requesting', sessionId, purpose, source: health.source });
     const current = loop.current;
     try {
@@ -177,7 +257,8 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
           if (current.inFlight) return;
           current.inFlight = true;
           void sendFrames(sessionId, windowId, new Uint8Array(0), 0, 0).then((status) => applyStatus(status, sessionId, windowId))
-            .catch(() => undefined).finally(() => { current.inFlight = false; });
+            .catch(() => { if (++current.failures >= 5 && !current.cancelled) recover('The connection to the server was lost.'); })
+            .finally(() => { current.inFlight = false; });
         }, 1000);
         if (checkinSeconds) current.checkin = setTimeout(() => { void stop(); }, checkinSeconds * 1000);
         return;
@@ -210,9 +291,9 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       }
       if (current.cancelled) return;
       if (!choice) {
+        // Webcams speed up when the light improves, so this is worth another try later.
         const best = Math.max(0, ...results.map((result) => result.fps ?? 0));
-        release(); live.current = {};
-        setState({ phase: 'error', sessionId, error: `Your camera delivered at most ${Math.round(best)} fps (tried ${results.map((result) => result.config.label).join(', ')}). Presage needs at least ${MIN_FPS} fps (it targets ${TARGET_FPS}), so it is off for now. More light can help; your study session continues normally.` });
+        recover(`Your camera delivered at most ${Math.round(best)} fps; Presage needs ${MIN_FPS} (it targets ${TARGET_FPS}). More light helps.`, true);
         return;
       }
       let configIndex = CAMERA_LADDER.findIndex((config) => config.label === choice!.config.label);
@@ -234,14 +315,18 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       });
       capture.encoding = step.encoding;
       current.capture = capture;
-      capture.start();
+      try { capture.start(); } catch (error) { throw new StartError(errorMessage(error, 'This browser cannot read camera frames.'), true); }
       // Started only now: the face box must not compete with the camera-rate probe or with frame capture.
       startTracking(video);
 
       const controller = new RecoveryController();
-      let lastDrops = 0;
+      let lastDrops = 0; let lastTotal = -1; let progressAt = Date.now();
       current.recovery = setInterval(() => {
         if (current.cancelled) return;
+        // Watchdog: a camera that stops delivering frames (frozen driver, device taken) is restarted.
+        if (capture.camera.total !== lastTotal) { lastTotal = capture.camera.total; progressAt = Date.now(); }
+        else if (Date.now() - progressAt >= STALL_MS) { recover('The camera stopped sending frames.'); return; }
+        if (Date.now() - startedAt >= HEALTHY_RESET_MS) retry.current.attempt = 0;
         const status = current.lastStatus;
         const drops = current.queueDrops + capture.encoderDrops - lastDrops; lastDrops = current.queueDrops + capture.encoderDrops;
         const action = controller.evaluate({
@@ -258,7 +343,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
           capture.longSide = next.longSide; capture.encoding = next.encoding;
           setState((previous) => ({ ...previous, encoding: next.encoding }));
         } else if (action.kind === 'give_up') {
-          void stop('camera_too_slow');
+          recover(action.reason, true);
           return;
         }
         const captureFps = capture.camera.fps();
@@ -267,19 +352,30 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
 
       if (checkinSeconds) current.checkin = setTimeout(() => { void stop(); }, checkinSeconds * 1000);
     } catch (error) {
-      release(); live.current = {};
-      setState({ phase: 'error', sessionId, error: error instanceof Error ? error.message : 'Presage could not start.' });
+      if (current.cancelled) return;
+      if (isFatal(error)) fail(sessionId, errorMessage(error, 'Presage could not start.'));
+      // A server answer without a code means it was unreachable or broken; its "try again" wording does not fit an automatic retry.
+      else recover(error instanceof PracticeApiError && !error.code ? 'The server can’t be reached right now.' : errorMessage(error, 'Presage could not start.'));
     }
-  }, [applyStatus, integration?.physiology, openCamera, pump, release, sendFrames, startMonitoring, startTracking, stop]);
+  }, [applyStatus, fail, integration?.physiology, openCamera, pump, recover, sendFrames, startMonitoring, startTracking, stop]);
+  useEffect(() => { beginRef.current = begin; }, [begin]);
+
+  /** The learner turns Presage on. From here it keeps itself running until they stop or leave. */
+  const start = useCallback(async (sessionId: string, purpose: MonitoringPurpose, checkinSeconds?: number) => {
+    if (live.current.windowId || intent.current) await stop();
+    intent.current = { sessionId, purpose, checkinEndsAt: checkinSeconds ? Date.now() + checkinSeconds * 1000 : undefined };
+    retry.current.attempt = 0;
+    await begin(sessionId, purpose, checkinSeconds);
+  }, [begin, stop]);
 
   const dismiss = useCallback(() => setState((previous) => previous.phase === 'error' || previous.phase === 'idle' ? { phase: 'idle' } : previous), []);
 
   // Leaving this session's pages ends monitoring; the camera never runs in the background.
-  const activeSession = state.phase === 'requesting' || state.phase === 'calibrating' || state.phase === 'monitoring' ? state.sessionId : undefined;
+  const activeSession = state.phase === 'requesting' || state.phase === 'calibrating' || state.phase === 'monitoring' || state.phase === 'reconnecting' ? state.sessionId : undefined;
   useEffect(() => {
     if (activeSession && !location.pathname.includes(activeSession)) void stop();
   }, [activeSession, location.pathname, stop]);
-  useEffect(() => () => release(), [release]);
+  useEffect(() => () => { intent.current = undefined; release(); }, [release]);
 
   return <MonitorContext.Provider value={{ state, stream, tracking, start, stop: () => stop(), dismiss }}>
     {children}

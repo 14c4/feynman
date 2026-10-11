@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import jpeg from 'jpeg-js';
 import { packBatch, type EncodedFrame } from '../src/features/insights/cameraPipeline.js';
-import { coverMapping, framingFor, presageStage, smoothBox, squareAround, type StageInput } from '../src/features/insights/faceGeometry.js';
+import { coverMapping, framingFor, GHOST_HIDE_AFTER_MS, GHOST_SHOW_AFTER_MS, ghostVisible, presageStage, smoothBox, squareAround, type StageInput } from '../src/features/insights/faceGeometry.js';
 import { faceFromMetrics, hrvFromMetrics, MonitoringService, type PresageModule } from '../server/physiology.js';
 
 test('the tracking square is square on screen, centred on the face, and steady against jitter', () => {
@@ -21,11 +21,29 @@ test('the tracking square is square on screen, centred on the face, and steady a
 });
 
 test('framing hints come from the detected face box and measured brightness', () => {
-  const centred = { x: 0.35, y: 0.25, w: 0.3, h: 0.45 };
+  // A relaxed head-and-shoulders shot: face in the upper middle, shoulders below.
+  const centred = { x: 0.4, y: 0.22, w: 0.2, h: 0.28 };
   assert.equal(framingFor({ faces: 1, bounds: centred, brightness: 120 }).code, 'ok');
   assert.equal(framingFor({ faces: 2, bounds: centred }).code, 'multiple');
   assert.equal(framingFor({ faces: 1, bounds: centred, brightness: 30 }).code, 'too_dark');
   assert.equal(framingFor({ faces: 1, bounds: { ...centred, h: 0.1 } }).code, 'too_far');
+  assert.equal(framingFor({ faces: 1, bounds: { ...centred, y: 0.1, h: 0.6 } }).code, 'too_close');
+  assert.equal(framingFor({ faces: 1, bounds: { ...centred, y: 0.5 } }).code, 'too_low');
+  assert.equal(framingFor({ faces: 1, bounds: { ...centred, y: 0.0 } }).code, 'too_high');
+  // Wide tolerance: leaning, slouching a little or sitting further back all still count as framed.
+  for (const bounds of [{ ...centred, x: 0.3 }, { ...centred, y: 0.3 }, { ...centred, y: 0.26, h: 0.16 }, { ...centred, y: 0.15, h: 0.36 }])
+    assert.equal(framingFor({ faces: 1, bounds }).code, 'ok', JSON.stringify(bounds));
+});
+
+test('the head-and-shoulders guide steps aside once framed and returns only for a lasting problem', () => {
+  const at = (framedForMs: number, offForMs: number, anyValid = false) => ({ framedForMs, offForMs, anyValid });
+  assert.equal(ghostVisible(true, at(0, 2000)), true, 'shown while getting set up');
+  assert.equal(ghostVisible(true, at(GHOST_HIDE_AFTER_MS - 1, 0)), true);
+  assert.equal(ghostVisible(true, at(GHOST_HIDE_AFTER_MS, 0)), false, 'hidden once framed for a moment');
+  assert.equal(ghostVisible(true, at(0, 1000, true)), false, 'a reliable reading already proves the framing works');
+  assert.equal(ghostVisible(false, at(0, GHOST_SHOW_AFTER_MS - 1)), false, 'brief movement does not bring it back');
+  assert.equal(ghostVisible(false, at(0, GHOST_SHOW_AFTER_MS)), true);
+  assert.equal(ghostVisible(true, at(0, GHOST_SHOW_AFTER_MS, true)), true, 'a lasting problem keeps it, even after readings');
 });
 
 test('the panel headline follows real signals and treats warm-up as collecting, not failure', () => {
@@ -41,6 +59,9 @@ test('the panel headline follows real signals and treats warm-up as collecting, 
   assert.equal(presageStage({ ...base, simulated: true, face: 'none', freshValid: true }).id, 'searching', 'simulated readings never imply a face');
   assert.equal(presageStage({ ...base, face: 'lost' }).id, 'lost');
   assert.equal(presageStage({ ...base, code: 'FACE_NOT_CENTERED' }).id, 'adjust');
+  assert.equal(presageStage({ ...base, code: 'CHEST_NOT_VISIBLE' }).id, 'adjust', 'while Presage holds readings back, the learner is told why');
+  assert.equal(presageStage({ ...base, code: 'CHEST_NOT_VISIBLE', freshValid: true, anyValid: true }).id, 'measuring', 'once pulse flows, a lingering chest warning is not shown');
+  assert.equal(presageStage({ ...base, phase: 'reconnecting', windowOpen: false, camera: false }).id, 'reconnecting');
   assert.equal(presageStage({ ...base, processing: 'error' }).id, 'error');
   // Without the local tracker, Presage's own validation still drives the headline.
   assert.equal(presageStage({ ...base, tracker: 'unavailable', code: 'NO_FACE_FOUND' }).id, 'searching');
@@ -122,5 +143,30 @@ test('face metrics are requested only when opted in, and expressions never', asy
   await service.start('s', 'in_session');
   const requested = FakeSdk.last!.options.requestedMetrics!;
   assert.ok([10, 11, 12].every((metric) => requested.includes(metric)) && !requested.includes(14));
+  service.close();
+});
+
+test('a new Presage session never starts while the previous one is still shutting down', async () => {
+  const order: string[] = [];
+  let release!: () => void;
+  class SlowSdk {
+    constructor() { order.push('construct'); }
+    useCustomInput() { return this; }
+    start() {}
+    stop() {}
+    destroy() { order.push('destroy:start'); return new Promise<void>((resolve) => { release = () => { order.push('destroy:end'); resolve(); }; }); }
+    sendFrame() { return true; }
+    on() { return this; }
+  }
+  const module: PresageModule = { SmartSpectraSDK: SlowSdk as unknown as PresageModule['SmartSpectraSDK'], decodeMetrics: () => ({}) };
+  const service = new MonitoringService({ env: { NODE_ENV: 'test', PRESAGE_API_KEY: 'k' }, loadPresage: async () => module });
+  const first = await service.start('s', 'in_session');
+  const stopping = service.stop('s', first.id);
+  const next = service.start('s', 'in_session');
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(order, ['construct', 'destroy:start'], 'the restart waits for the old session to be destroyed');
+  release();
+  await stopping; await next;
+  assert.deepEqual(order, ['construct', 'destroy:start', 'destroy:end', 'construct']);
   service.close();
 });

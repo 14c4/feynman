@@ -71,7 +71,7 @@ export interface SessionTimeline {
   items: TimelineItem[];
   /** Answer moments per question, in time order (only those with a recorded time). */
   answers: AnswerMoment[];
-  samples: { pulse: (PhysiologySample & { t: number })[]; breathing: (PhysiologySample & { t: number })[] };
+  samples: { pulse: (PhysiologySample & { t: number })[] };
   windows: MonitoringWindow[];
   /** True when any reading came from the development simulator. */
   simulated: boolean;
@@ -166,20 +166,21 @@ export function buildTimeline(session: PracticeSession): SessionTimeline {
   }
 
   const windows = session.monitoring ?? [];
-  const samples: SessionTimeline['samples'] = { pulse: [], breathing: [] };
+  const samples: SessionTimeline['samples'] = { pulse: [] };
   for (const window of windows) {
     const started = time(window.startedAt); const ended = time(window.endedAt);
     if (started !== undefined) items.push({ id: `${window.id}:start`, at: started, type: 'monitoring', edge: 'started', window });
     if (ended !== undefined) items.push({ id: `${window.id}:end`, at: ended, type: 'monitoring', edge: 'ended', window });
     for (const [index, note] of window.quality.entries()) { const at = time(note.at); if (at !== undefined) items.push({ id: `${window.id}:q${index}`, at, type: 'quality', note, windowId: window.id }); }
-    for (const sample of window.samples) { const t = time(sample.at); if (t !== undefined) samples[sample.metric].push({ ...sample, t }); }
+    // Breathing is no longer measured; rows from older windows are left out.
+    for (const sample of window.samples) { const t = time(sample.at); if (t !== undefined && sample.metric === 'pulse') samples.pulse.push({ ...sample, t }); }
   }
-  samples.pulse.sort((a, b) => a.t - b.t); samples.breathing.sort((a, b) => a.t - b.t);
+  samples.pulse.sort((a, b) => a.t - b.t);
 
   // Chronological, with the server's sequence breaking ties between events at the same instant.
   items.sort((a, b) => a.at - b.at || (seq.get(a.id) ?? 0) - (seq.get(b.id) ?? 0));
   const start = Math.min(time(session.createdAt) ?? Infinity, items[0]?.at ?? Infinity);
-  const end = Math.max(start, items.at(-1)?.at ?? start, samples.pulse.at(-1)?.t ?? start, samples.breathing.at(-1)?.t ?? start, time(session.completedAt) ?? start);
+  const end = Math.max(start, items.at(-1)?.at ?? start, samples.pulse.at(-1)?.t ?? start, time(session.completedAt) ?? start);
   return { start, end, phases: phaseSpans(session, end), items, answers, samples, windows, simulated: windows.some((window) => window.source === 'simulated') };
 }
 
@@ -241,7 +242,7 @@ export function readingsNear(timeline: SessionTimeline, at: number, windowMs = 2
     const values = valid.map((sample) => sample.value);
     return { count: valid.length, min: Math.min(...values), max: Math.max(...values), mean: Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10 };
   };
-  return { pulse: near(timeline.samples.pulse), breathing: near(timeline.samples.breathing) };
+  return { pulse: near(timeline.samples.pulse) };
 }
 
 /** Mean of valid readings per phase, for the quick summary. */
@@ -252,6 +253,6 @@ export function phaseReadings(timeline: SessionTimeline) {
       const valid = inside.filter((sample) => sample.valid);
       return { valid: valid.length, total: inside.length, mean: valid.length ? Math.round((valid.reduce((sum, sample) => sum + sample.value, 0) / valid.length) * 10) / 10 : undefined };
     };
-    return { phase: span.phase, pulse: stats(timeline.samples.pulse), breathing: stats(timeline.samples.breathing) };
+    return { phase: span.phase, pulse: stats(timeline.samples.pulse) };
   });
 }

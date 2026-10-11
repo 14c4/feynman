@@ -150,7 +150,7 @@ test('a full cycle records ordered, phase-consistent events and builds the readi
   assert.equal(results.stage, 'results');
   assert.equal(timeline.items.filter((item) => item.type === 'nervousness').length, 2);
   assert.equal(timeline.windows.length, 0);
-  assert.deepEqual(readingsNear(timeline, timeline.start), { pulse: undefined, breathing: undefined }, 'No readings are invented without monitoring');
+  assert.deepEqual(readingsNear(timeline, timeline.start), { pulse: undefined }, 'No readings are invented without monitoring');
 });
 
 test('Presage readings follow published reliability rules', () => {
@@ -159,10 +159,8 @@ test('Presage readings follow published reliability rules', () => {
   assert.equal(isValidReading('pulse', 70, 39, true, 20_000), false, 'pulse needs confidence ≥ 40');
   assert.equal(isValidReading('pulse', 70, 90, false, 20_000), false, 'unstable readings are not valid');
   assert.equal(isValidReading('pulse', 130, 90, true, 20_000), false, 'outside the 40–110 operating range');
-  assert.equal(isValidReading('breathing', 14, 50, true, 29_000), false, 'breathing warm-up is 30 s');
-  assert.equal(isValidReading('breathing', 14, 44, true, 31_000), false, 'breathing needs confidence ≥ 45');
-  assert.equal(isValidReading('breathing', 14, 45, true, 31_000), true);
-  const parsed = readingsFromMetrics({ cardio: { pulseRate: [{ value: 71.2, confidence: 66, stable: true, timestamp: { toString: () => '1700000000000000' } }] }, breathing: { rate: [{ value: 'bad', timestamp: 1 }] } });
+  assert.equal(isValidReading('breathing', 14, 90, true, 60_000), false, 'breathing is no longer measured, so never counts');
+  const parsed = readingsFromMetrics({ cardio: { pulseRate: [{ value: 71.2, confidence: 66, stable: true, timestamp: { toString: () => '1700000000000000' } }] }, breathing: { rate: [{ value: 15, confidence: 90, stable: true, timestamp: 1_700_000_000_000_000 }] } });
   assert.deepEqual(parsed, [{ metric: 'pulse', value: 71.2, confidence: 66, stable: true, atMs: 1_700_000_000_000 }]);
 });
 
@@ -187,9 +185,9 @@ test('simulated monitoring is labeled, timestamped and joins the session timelin
   assert.equal(window.source, 'simulated');
   context.mock.timers.tick(39_000);
   const status = service.ingest('session-1', window.id, Buffer.alloc(0), 0, 0);
-  assert.ok(status.window.samples.length >= 60);
+  assert.ok(status.window.samples.length >= 30, 'one pulse reading per second');
   assert.ok(status.window.samples.every((sample) => Number.isFinite(Date.parse(sample.at))));
-  assert.equal(status.window.samples.filter((sample) => sample.metric === 'breathing' && Date.parse(sample.at) - Date.parse(window.startedAt) < 30_000 && sample.valid).length, 0, 'no breathing reading counts during warm-up');
+  assert.ok(status.window.samples.every((sample) => sample.metric === 'pulse'), 'only pulse is simulated');
   assert.ok(status.latest.pulse?.valid);
   assert.throws(() => service.ingest('another-session', window.id, Buffer.alloc(0), 0, 0), /not found/);
   const stopped = await service.stop('session-1', window.id);
@@ -230,7 +228,11 @@ test('Presage pipeline: binary frames reach the SDK in order, readings are valid
   const window = session.monitoring!.find((item) => item.status === 'active')!;
   const sdk = FakeSdk.last!;
   assert.equal(sdk.started, true); assert.equal(sdk.input, 0);
-  assert.deepEqual((sdk.options as { requestedMetrics: number[] }).requestedMetrics, [2, 15]);
+  assert.deepEqual((sdk.options as { requestedMetrics: number[] }).requestedMetrics, [2, 15], 'the documented breathing + cardio bundles; breathing output is discarded');
+  const experiment = new MonitoringService({ env: { NODE_ENV: 'test', PRESAGE_API_KEY: 'test-key', PRESAGE_METRICS: 'pulse' }, loadPresage: async () => fakeModule });
+  await experiment.start('other', 'in_session');
+  assert.deepEqual((FakeSdk.last!.options as { requestedMetrics: number[] }).requestedMetrics, [15, 17], 'PRESAGE_METRICS=pulse requests pulse and HRV only');
+  experiment.close();
   const origin = Date.parse('2026-10-10T10:00:00Z') * 1000;
   const framesPath = `${api.path}/monitoring/${window.id}/frames?w=64&h=64`;
   await api.call<ApiResponse>(framesPath, 'POST', new Uint8Array(frameBatch([origin]).subarray(5)), 400);
@@ -247,10 +249,10 @@ test('Presage pipeline: binary frames reach the SDK in order, readings are valid
   assert.equal(status.code, 'OK');
   assert.deepEqual(status.window.quality.map((note) => note.code), ['NO_FACE_FOUND', 'OK'], 'Repeated statuses are debounced');
   assert.deepEqual(status.window.samples.filter((sample) => sample.metric === 'pulse').map((sample) => [sample.value, sample.valid]), [[70, false], [71, true], [72, false], [73, false]], 'Warm-up, confidence and stability rules apply; duplicates are ignored');
-  assert.equal(status.latest.breathing?.valid, true);
+  assert.ok(status.window.samples.every((sample) => sample.metric === 'pulse'), 'breathing values in a metrics packet are ignored');
 
   const loaded = await api.call(api.path, 'GET');
-  assert.equal(loaded.monitoring?.[0].samples.length, 5);
+  assert.equal(loaded.monitoring?.[0].samples.length, 4);
   const json = JSON.stringify(loaded);
   assert.equal(json.includes('test-key'), false, 'The API key is never exposed');
   assert.ok(json.length < 10_000, 'Frames are not stored');
@@ -261,6 +263,7 @@ test('Presage pipeline: binary frames reach the SDK in order, readings are valid
   const failed = await api.call<MonitoringStatus>(framesPath, 'POST', new Uint8Array(frameBatch([origin + 99_000])), 200);
   assert.equal(failed.window.status, 'error');
   assert.match(failed.window.endReason!, /API key/);
+  assert.equal(failed.window.fatal, true, 'a rejected key is marked fatal so the browser does not retry');
   await new Promise((resolve) => setTimeout(resolve, 5));
   assert.equal(sdk.destroyed, true, 'The SDK is released when a window ends');
   await api.call(api.path, 'DELETE');

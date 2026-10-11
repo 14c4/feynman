@@ -200,8 +200,9 @@ export type MonitoringPurpose = 'before_assessment' | 'after_teaching' | 'after_
 /** One downsampled reading. `valid` means it passed Presage's confidence, stability, warm-up and range checks. */
 export interface PhysiologySample {
   at: string;
+  /** Only pulse is measured. Windows saved before breathing was dropped may still hold 'breathing' rows; they are ignored. */
   metric: 'pulse' | 'breathing';
-  /** Beats or breaths per minute. */
+  /** Beats per minute. */
   value: number;
   /** 0–100 as reported by the SDK (or the simulator). */
   confidence: number;
@@ -219,6 +220,8 @@ export interface MonitoringWindow {
   endedAt?: string;
   status: 'active' | 'ended' | 'error';
   endReason?: string;
+  /** The window ended for a reason retrying cannot fix (API key rejected, no credits). */
+  fatal?: boolean;
   framesReceived: number;
   samples: PhysiologySample[];
   /** Validation status changes (face not found, motion, lighting…), debounced. */
@@ -394,7 +397,7 @@ export interface MonitoringStatus {
   /** Latest validation hint from the SDK, if any. */
   hint?: string;
   code?: string;
-  latest: { pulse?: PhysiologySample; breathing?: PhysiologySample };
+  latest: { pulse?: PhysiologySample };
   pipeline?: PipelineStats;
   /** Measurement clock: ms since the first frame reached Presage (or the simulated window began). Warm-ups count from here. */
   elapsedMs?: number;
@@ -444,11 +447,8 @@ export const MONITORING_LIMITS = {
   idleMs: 15_000,
   maxSamplesPerWindow: 7200,
   pulseWarmupMs: 12_000,
-  breathingWarmupMs: 30_000,
   pulseMinConfidence: 40,
-  breathingMinConfidence: 45,
   pulseRange: [40, 110],
-  breathingRange: [5, 40],
 } as const;
 
 export const MATERIAL_LIMITS = {

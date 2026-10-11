@@ -3,7 +3,7 @@ import type { MonitoringPurpose, MonitoringStatus, PhysiologySource, PracticeSes
 import type { FrameEncoding } from './cameraPipeline';
 import type { TrackingStore, TrackingSummary } from './faceTracker';
 
-export type MonitorPhase = 'idle' | 'requesting' | 'calibrating' | 'monitoring' | 'stopping' | 'error';
+export type MonitorPhase = 'idle' | 'requesting' | 'calibrating' | 'monitoring' | 'stopping' | 'reconnecting' | 'error';
 
 export interface MonitorState {
   phase: MonitorPhase;
@@ -30,6 +30,8 @@ export interface MonitorState {
   encoding?: FrameEncoding;
   /** Local face-tracker summary, refreshed a few times a second. */
   tracking?: TrackingSummary;
+  /** While reconnecting: why, which attempt, and when the next try starts (epoch ms). */
+  retry?: { attempt: number; at: number; reason: string; waitingForTab?: boolean };
   error?: string;
   /** Summary of the last finished window, shown until dismissed. */
   finished?: { sessionId: string; valid: number; total: number; reason?: string; source: PhysiologySource };
@@ -69,4 +71,3 @@ export function purposeFor(session: PracticeSession): MonitoringPurpose {
   return 'in_session';
 }
 
-/** Long enough for Presage's 30-second breathing warm-up plus some valid readings. */

@@ -60,29 +60,55 @@ export function coverMapping(frameWidth: number, frameHeight: number, elementWid
   return { x: (u: number) => offsetX + u * width, y: (v: number) => offsetY + v * height, width, height };
 }
 
-export type FramingCode = 'ok' | 'multiple' | 'too_far' | 'too_close' | 'off_center' | 'too_dark' | 'too_bright';
+export type FramingCode = 'ok' | 'multiple' | 'too_far' | 'too_close' | 'too_high' | 'too_low' | 'off_center' | 'too_dark' | 'too_bright';
 export interface Framing { code: FramingCode; message: string }
 
-/** Plain camera framing feedback from the local tracker, most important issue first. */
+/**
+ * Where the guide silhouette puts the face: a relaxed head-and-shoulders shot with the upper chest
+ * in view, the pose Presage needs before it reports anything. Normalized to the camera frame.
+ */
+export const HEAD_SHOULDERS_TARGET = { cx: 0.5, cy: 0.32, h: 0.24 } as const;
+
+/**
+ * Plain camera framing feedback from the local tracker, most important issue first. The ranges are
+ * deliberately wide around HEAD_SHOULDERS_TARGET: anything Presage can work with counts as framed,
+ * so the learner can sit naturally instead of holding one exact position.
+ */
 export function framingFor(observation: Pick<FaceObservation, 'faces' | 'bounds' | 'brightness'>): Framing {
   const { bounds, brightness } = observation;
   const cx = bounds.x + bounds.w / 2; const cy = bounds.y + bounds.h / 2;
   if (observation.faces > 1) return { code: 'multiple', message: 'More than one face is in view. Presage measures one person at a time.' };
   if (brightness !== undefined && brightness < 55) return { code: 'too_dark', message: 'Your face is in shadow. Face a window or lamp.' };
   if (brightness !== undefined && brightness > 215) return { code: 'too_bright', message: 'Your face is overexposed. Move away from direct light.' };
-  if (bounds.h < 0.22) return { code: 'too_far', message: 'Move a little closer to the camera.' };
-  if (bounds.h > 0.75) return { code: 'too_close', message: 'Sit back a little so your whole face fits.' };
-  if (Math.abs(cx - 0.5) > 0.22 || Math.abs(cy - 0.48) > 0.22) return { code: 'off_center', message: 'Centre your face in the frame.' };
+  if (bounds.h < 0.14) return { code: 'too_far', message: 'Move a little closer to the camera.' };
+  if (bounds.h > 0.38) return { code: 'too_close', message: 'Sit back a little so your shoulders and upper chest show.' };
+  if (Math.abs(cx - 0.5) > 0.22) return { code: 'off_center', message: 'Shift a little toward the middle of the frame.' };
+  if (cy > 0.55) return { code: 'too_low', message: 'Sit up a little, or tilt your screen toward you.' };
+  if (cy < 0.18) return { code: 'too_high', message: 'Tilt your screen back a little.' };
   return { code: 'ok', message: 'Well framed.' };
+}
+
+/** The guide hides after this long well framed, and returns only after framing has been off this long. */
+export const GHOST_HIDE_AFTER_MS = 3000;
+export const GHOST_SHOW_AFTER_MS = 5000;
+
+/**
+ * Whether the head-and-shoulders guide shows. It starts visible, steps aside once the learner is
+ * framed (or Presage already has a reliable reading), and comes back only for a lasting problem,
+ * so normal movement never brings it flickering back.
+ */
+export function ghostVisible(previous: boolean, input: { framedForMs: number; offForMs: number; anyValid: boolean }): boolean {
+  if (previous) return !(input.framedForMs >= GHOST_HIDE_AFTER_MS || (input.anyValid && input.offForMs < GHOST_SHOW_AFTER_MS));
+  return input.offForMs >= GHOST_SHOW_AFTER_MS;
 }
 
 /* ---------- operational status ---------- */
 
 export type PresageStageId =
-  | 'off' | 'camera' | 'loading' | 'searching' | 'detected' | 'tracking' | 'collecting' | 'measuring' | 'adjust' | 'lost' | 'saving' | 'error';
+  | 'off' | 'camera' | 'loading' | 'searching' | 'detected' | 'tracking' | 'collecting' | 'measuring' | 'adjust' | 'lost' | 'saving' | 'reconnecting' | 'error';
 
 export interface StageInput {
-  phase: 'idle' | 'requesting' | 'calibrating' | 'monitoring' | 'stopping' | 'error';
+  phase: 'idle' | 'requesting' | 'calibrating' | 'monitoring' | 'stopping' | 'reconnecting' | 'error';
   simulated: boolean;
   /** The camera is open (false when it was declined in simulated mode, or not yet granted). */
   camera: boolean;
@@ -108,6 +134,8 @@ export interface StageInput {
 export interface Stage { id: PresageStageId; label: string; tone: 'idle' | 'wait' | 'live' | 'warn' | 'error' }
 
 const PRESAGE_FACE_LOST = new Set(['NO_FACE_FOUND']);
+// Presage holds back readings while one of these persists. Once readings flow ("measuring" wins above),
+// a lingering code is not shown, so the learner is only asked to move when it actually matters.
 const PRESAGE_ADJUST = new Set(['MULTIPLE_FACES_FOUND', 'FACE_NOT_CENTERED', 'FACE_SIZE_OUT_OF_RANGE', 'TOO_DARK', 'TOO_BRIGHT', 'CHEST_NOT_VISIBLE', 'FRAME_RATE_TOO_LOW', 'EXCESSIVE_MOTION', 'FACE_TOO_CLOSE', 'FACE_TOO_FAR', 'FACE_TOO_HIGH', 'FACE_TOO_LOW', 'FACE_NOT_FORWARD']);
 
 /**
@@ -116,14 +144,17 @@ const PRESAGE_ADJUST = new Set(['MULTIPLE_FACES_FOUND', 'FACE_NOT_CENTERED', 'FA
  * validated readings). Warm-up is "collecting", never a failure.
  */
 export function presageStage(input: StageInput): Stage {
+  // A chest-only warning still means Presage has the face, which is all pulse needs.
+  const faceOk = input.code === 'OK' || input.code === 'CHEST_NOT_VISIBLE';
   if (input.phase === 'error') return { id: 'error', label: 'Processing error', tone: 'error' };
   if (input.phase === 'stopping') return { id: 'saving', label: 'Saving readings', tone: 'wait' };
+  if (input.phase === 'reconnecting') return { id: 'reconnecting', label: 'Reconnecting', tone: 'wait' };
   if (input.phase === 'idle') return { id: 'off', label: 'Camera off', tone: 'idle' };
   if (input.phase === 'requesting' && !input.camera) return { id: 'camera', label: 'Initializing camera', tone: 'wait' };
   if (!input.windowOpen || (input.camera && input.tracker === 'loading' && input.face === 'none')) return { id: 'loading', label: 'Loading analysis', tone: 'wait' };
   if (input.processing === 'error') return { id: 'error', label: 'Processing error', tone: 'error' };
   // Presage's own validation outranks the on-device tracker: a validated reading means it sees the face.
-  if (!input.simulated && input.freshValid && input.code === 'OK') return { id: 'measuring', label: 'Measurements available', tone: 'live' };
+  if (!input.simulated && input.freshValid && faceOk) return { id: 'measuring', label: 'Measurements available', tone: 'live' };
   const localFace = input.camera && input.tracker === 'ready' ? input.face : undefined;
   if (localFace === 'lost' || (localFace !== 'none' && input.code && PRESAGE_FACE_LOST.has(input.code) && input.anyValid)) return { id: 'lost', label: 'Tracking lost', tone: 'warn' };
   if (localFace === 'none' || (localFace === undefined && input.code && PRESAGE_FACE_LOST.has(input.code))) return { id: 'searching', label: 'Searching for face', tone: 'wait' };
@@ -131,7 +162,7 @@ export function presageStage(input: StageInput): Stage {
   if (input.code && PRESAGE_ADJUST.has(input.code)) return { id: 'adjust', label: 'Adjust position or light', tone: 'warn' };
   if (input.simulated) return { id: 'collecting', label: 'Collecting measurement data', tone: 'live' };
   if (input.metricsPackets > 0) return { id: 'collecting', label: 'Collecting measurement data', tone: 'live' };
-  if (input.code === 'OK' && input.framesReceived > 0) return { id: 'tracking', label: 'Tracking active', tone: 'live' };
+  if (faceOk && input.framesReceived > 0) return { id: 'tracking', label: 'Tracking active', tone: 'live' };
   return { id: 'detected', label: 'Face detected', tone: 'wait' };
 }
 

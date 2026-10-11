@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { FpsMeter, measureFps, MIN_FPS, pickConfig, processingSize, RecoveryController, rgbaToRgb, TARGET_FPS, CAMERA_LADDER, type PipelineSample, type RecoveryAction } from '../src/features/insights/cameraPipeline.js';
+import { FpsMeter, measureFps, MIN_FPS, pickConfig, processingSize, RecoveryController, retryDelay, rgbaToRgb, TARGET_FPS, CAMERA_LADDER, type PipelineSample, type RecoveryAction } from '../src/features/insights/cameraPipeline.js';
 import { MonitoringService, rollingFps, type PresageModule } from '../server/physiology.js';
 
 /** Capture timestamps (ms) for a camera running at `fps`, with ±`jitter` ms of timing noise. */
@@ -168,4 +168,9 @@ test('metrics that cannot be decoded are counted and reported, not dropped silen
   assert.equal(status.presage!.decodeErrors, 1);
   assert.match(status.presage!.lastDecodeError!, /bad wire format/);
   service.close();
+});
+
+test('automatic restarts back off, cap at 30 seconds and never run out', () => {
+  assert.deepEqual([0, 1, 2, 3, 4, 5, 50].map((attempt) => retryDelay(attempt)), [2000, 5000, 10_000, 20_000, 30_000, 30_000, 30_000]);
+  assert.deepEqual([0, 3, 9].map((attempt) => retryDelay(attempt, true)), [15_000, 20_000, 30_000], 'a too-slow camera waits longer for the light to change');
 });

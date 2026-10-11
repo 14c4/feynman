@@ -4,6 +4,8 @@
   --presage-lock: #3fcf8e;
   --presage-warn: #f0b84a;
   --presage-sdk: #7fb6e6;
+  /* The head-and-shoulders guide; the camera stage is dark in both themes. */
+  --presage-ghost: rgb(255 255 255 / 0.55);
   --presage-stage-bg: #0d1310;
   display: grid; gap: 0; align-content: start; padding: var(--s-4); box-shadow: var(--shadow-xs);
 }
@@ -43,7 +45,7 @@
 .presage-guidance { position: absolute; z-index: 2; left: var(--s-3); right: var(--s-3); bottom: var(--s-3); padding: 8px 12px; border-radius: var(--r-md); background: rgb(10 14 12 / 0.74); color: #fff; font-size: var(--text-xs); line-height: 1.45; backdrop-filter: blur(6px); }
 
 /* Readings */
-.presage-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-2); }
+.presage-tiles { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s-2); }
 .presage-tile { display: grid; gap: 6px; padding: var(--s-3); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
 .presage-tile[data-state='live'] { border-color: #cfe0d4; background: var(--surface-tint); }
 .presage-tile-label { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-xs); color: var(--muted); }
