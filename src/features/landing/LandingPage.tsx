@@ -49,8 +49,7 @@ function NavActions() {
     <button type="button" className="button button--quiet" onClick={() => void signOut().then(() => window.scrollTo(0, 0))}>Sign out</button>
   </div>;
   return <div className="lp-nav-end">
-    {available && <Link className="button button--quiet" to="/account">Sign in</Link>}
-    <Link className="button button--primary" to="/app">Try it out<span className="button-arrow"><PracticeIcon name="arrow" size={14} /></span></Link>
+    {available && <Link className="button button--secondary" to="/account">Sign in</Link>}
   </div>;
 }
 
@@ -137,6 +136,20 @@ function HeroStage({ reduced }: { reduced: boolean }) {
 
 /** The guest view: what feynman.ai is, shown rather than told. */
 function Showcase({ reduced, onHow }: { reduced: boolean; onHow: () => void }) {
+  // On phones the three steps become a swipeable row; the dots follow the swipe and jump to a step.
+  const steps = useRef<HTMLOListElement>(null);
+  const [activeStep, setActiveStep] = useState(0);
+  const offsetOf = (index: number) => {
+    const list = steps.current; const first = list?.children[0] as HTMLElement | undefined; const card = list?.children[index] as HTMLElement | undefined;
+    return first && card ? card.offsetLeft - first.offsetLeft : 0;
+  };
+  const onStepsScroll = () => {
+    const list = steps.current; if (!list) return;
+    const width = offsetOf(1) || 1;
+    setActiveStep(Math.min(2, Math.max(0, Math.round(list.scrollLeft / width))));
+  };
+  const goToStep = (index: number) => steps.current?.scrollTo({ left: offsetOf(index), behavior: reduced ? 'auto' : 'smooth' });
+
   return <>
     <section className="lp-hero">
       <div className="lp-aurora" aria-hidden="true"><span /><span /><span /></div>
@@ -164,7 +177,7 @@ function Showcase({ reduced, onHow }: { reduced: boolean; onHow: () => void }) {
         <span className="eyebrow">How it works</span>
         <h2 id="how-title">Learn it by teaching it.</h2>
       </div>
-      <ol className="lp-steps">
+      <ol ref={steps} className="lp-steps" onScroll={onStepsScroll}>
         <li className="lp-step" data-reveal style={{ '--d': 0 } as CSSProperties}>
           <div className="lp-step-visual lp-v-check" aria-hidden="true">
             <div className="lp-v-card">
@@ -198,6 +211,7 @@ function Showcase({ reduced, onHow }: { reduced: boolean; onHow: () => void }) {
           <p>New questions on the same ideas. See what stuck.</p>
         </li>
       </ol>
+      <div className="lp-dots">{['Check', 'Teach', 'Recheck'].map((label, index) => <button key={label} type="button" aria-label={`Show step ${index + 1}: ${label}`} aria-current={activeStep === index || undefined} onClick={() => goToStep(index)} />)}</div>
     </section>
 
     <section className="lp-section lp-split" aria-labelledby="results-title">
