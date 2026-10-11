@@ -28,7 +28,7 @@ function StageTrack({ stage }: { stage: PracticeStage }) {
 
 function OpenButton({ item, opening, onOpen, primary }: { item: SessionSummary; opening?: string; onOpen: (item: SessionSummary) => void; primary?: boolean }) {
   const done = item.stage === 'results';
-  return <Button variant={primary ? 'primary' : 'secondary'} size={primary ? 'lg' : 'sm'} className={primary ? 'wb-open' : ''} disabled={Boolean(opening)} onClick={() => onOpen(item)}>
+  return <Button variant={primary ? 'primary' : 'secondary'} size={primary ? 'lg' : 'sm'} className={primary ? 'wb-open' : ''} data-magnetic={primary || undefined} disabled={Boolean(opening)} onClick={() => onOpen(item)}>
     {opening === item.id ? <><span className="spinner" aria-hidden="true" />Opening…</> : <>{done ? 'View results' : 'Continue'}{primary && <span className="button-arrow"><PracticeIcon name="arrow" size={14} /></span>}</>}
   </Button>;
 }
@@ -56,12 +56,12 @@ export function WelcomeBack() {
 
       <div className="wb-feature">
         {!items && !error && <div className="wb-card wb-card--loading" aria-busy="true"><span className="skeleton" /><span className="skeleton" /><span className="skeleton" /></div>}
-        {items && !featured && <div className="wb-card wb-card--first">
+        {items && !featured && <div className="wb-card wb-card--first" data-glow>
           <AlexAvatar state="idle" size="lg" />
           <div className="wb-card-copy"><span className="lp-w-label">Your first session</span><h2>Teach Alex something.</h2>
-            <Link className="button button--primary button--lg wb-open" to="/app">Start<span className="button-arrow"><PracticeIcon name="arrow" size={14} /></span></Link></div>
+            <Link className="button button--primary button--lg wb-open" to="/app" viewTransition data-magnetic>Start<span className="button-arrow"><PracticeIcon name="arrow" size={14} /></span></Link></div>
         </div>}
-        {featured && <div className="wb-card">
+        {featured && <div className="wb-card" data-glow>
           <AlexAvatar state={unfinished ? 'listening' : 'idle'} size="lg" />
           <div className="wb-card-copy">
             <span className="lp-w-label">{unfinished ? 'Continue' : 'Latest results'} · {savedWhen(featured.updatedAt)}</span>
@@ -69,7 +69,7 @@ export function WelcomeBack() {
             <StageTrack stage={featured.stage} />
             <div className="wb-card-actions">
               <OpenButton item={featured} opening={opening} onOpen={onOpen} primary />
-              <Link className="button button--secondary button--lg wb-open" to="/app">New session<span className="button-arrow wb-arrow-soft"><PracticeIcon name="plus" size={14} /></span></Link>
+              <Link className="button button--secondary button--lg wb-open" to="/app" viewTransition>New session<span className="button-arrow wb-arrow-soft"><PracticeIcon name="plus" size={14} /></span></Link>
             </div>
           </div>
         </div>}
@@ -85,7 +85,7 @@ export function WelcomeBack() {
       <ul className="wb-list">
         {shown.map((item, index) => {
           const step = STEP_OF[item.stage];
-          return <li key={item.id} style={{ '--i': index } as CSSProperties}>
+          return <li key={item.id} data-glow style={{ '--i': index } as CSSProperties}>
             <span className={`wb-list-icon${item.stage === 'results' ? ' is-done' : ''}`} aria-hidden="true"><PracticeIcon name={ICONS[step]!} size={16} /></span>
             <div className="wb-list-copy"><strong>{item.title}</strong><span>{STAGE_LABEL[item.stage]} · {savedWhen(item.updatedAt)}</span></div>
             <span className="wb-mini" aria-hidden="true">{STEPS.map((step_, position) => <i key={step_} className={position < step || item.stage === 'results' ? 'is-done' : position === step ? 'is-now' : ''} />)}</span>

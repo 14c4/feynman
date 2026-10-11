@@ -35,7 +35,7 @@ export function useSavedSessions() {
 
   const open = useCallback(async (item: SessionSummary) => {
     setOpening(item.id); setError('');
-    try { await resumeSession(item.id); await navigate(item.stage === 'results' ? `/results/${item.id}` : `/study/${item.id}`); }
+    try { await resumeSession(item.id); await navigate(item.stage === 'results' ? `/results/${item.id}` : `/study/${item.id}`, { viewTransition: true }); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not open that session.'); }
     finally { setOpening(undefined); }
   }, [resumeSession, navigate]);

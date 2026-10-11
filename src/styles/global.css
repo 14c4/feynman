@@ -150,3 +150,12 @@ button.chip:hover:not(:disabled) { border-color: var(--green-300); background: v
 .text-button { display: inline-flex; align-items: center; gap: 6px; padding: 2px 0; border: 0; background: none; font-size: var(--text-sm); font-weight: 500; color: var(--accent-ink); text-decoration: underline; text-decoration-color: var(--green-300); text-underline-offset: 3px; transition: text-decoration-color var(--t-fast) var(--ease); }
 .text-button:hover:not(:disabled) { text-decoration-color: currentColor; }
 .text-button:disabled { opacity: 0.5; }
+
+/* Page transitions (View Transitions API): the old page softly recedes, the new one rises in. The logo is shared, so it stays put. */
+@keyframes vt-out { to { opacity: 0; transform: scale(0.985); filter: blur(4px); } }
+@keyframes vt-in { from { opacity: 0; transform: translateY(12px); } }
+::view-transition-old(root) { animation: vt-out 240ms cubic-bezier(0.4, 0, 1, 1) both; }
+::view-transition-new(root) { animation: vt-in 420ms cubic-bezier(0.2, 0.7, 0.2, 1) 60ms both; }
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
+}

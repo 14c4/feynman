@@ -5,6 +5,10 @@ import { PracticeIcon } from '../../components/practice/PracticeIcon';
 import { AlexAvatar } from '../study/AlexAvatar';
 import { ALEX_LABELS, type AlexState } from '../study/alexState';
 import { useAuth } from '../../state/useAuth';
+import { CountUp } from './CountUp';
+import { prefersReducedMotion, usePointerEffects } from './effects';
+import { Ring } from './Ring';
+import { StepsStory } from './StepsStory';
 import { WelcomeBack } from './WelcomeBack';
 import '../study/study.css';
 import './landing.css';
@@ -12,10 +16,44 @@ import './landing.css';
 /* Everything on this page is an illustration of the product; nothing here calls a provider. */
 const BEATS: AlexState[] = ['user-speaking', 'thinking', 'speaking'];
 const QUESTIONS = ['So where does the oxygen actually come from?', 'Why does it need light at all?', 'Could a plant do this in the dark?'];
-const TOPICS = ['Photosynthesis', 'Supply & demand', 'Derivatives', 'The French Revolution', 'Recursion', 'Mitosis', 'Ohm’s law', 'Plate tectonics', 'Bayes’ theorem', 'The Krebs cycle', 'Opportunity cost', 'Newton’s laws'];
-const CONCEPTS = [{ name: 'Light reactions', before: 0, after: 2 }, { name: 'Calvin cycle', before: 1, after: 2 }, { name: 'Chlorophyll', before: 0, after: 1 }];
+// The ticker's bank: every kind of subject, from intro to niche. Shuffled per visit, so no two scrolls match.
+const TOPICS = [
+  'Photosynthesis', 'Supply & demand', 'Derivatives', 'The French Revolution', 'Recursion', 'Mitosis', 'Ohm’s law', 'Plate tectonics',
+  'Bayes’ theorem', 'The Krebs cycle', 'Opportunity cost', 'Newton’s laws', 'Quantum entanglement', 'General relativity', 'Black holes',
+  'Reaction mechanisms', 'Electronegativity', 'Le Chatelier’s principle', 'Stoichiometry', 'The periodic table', 'CRISPR', 'Natural selection',
+  'The immune system', 'Action potentials', 'Protein folding', 'Epigenetics', 'The nitrogen cycle', 'Glycolysis', 'The cardiac cycle',
+  'Pharmacokinetics', 'Eigenvalues', 'Group theory', 'Prime numbers', 'Fourier series', 'Integration by parts', 'Probability distributions',
+  'Game theory', 'Graph theory', 'Big-O notation', 'Hash tables', 'Public-key cryptography', 'Neural networks', 'TCP/IP', 'Compilers',
+  'Sorting algorithms', 'Git branching', 'Semiconductors', 'Circuit design', 'Aerodynamics', 'Bridge design', 'The Cold War',
+  'The Roman Republic', 'The Silk Road', 'The Industrial Revolution', 'The Meiji Restoration', 'The Ottoman Empire', 'The Renaissance',
+  'Apartheid', 'Existentialism', 'Kant’s ethics', 'Utilitarianism', 'Plato’s cave', 'Stoicism', 'Cognitive dissonance',
+  'Classical conditioning', 'Confirmation bias', 'Maslow’s hierarchy', 'Monetary policy', 'Inflation', 'Compound interest',
+  'Comparative advantage', 'Behavioral economics', 'Double-entry bookkeeping', 'Marketing funnels', 'Impressionism', 'Iambic pentameter',
+  'The hero’s journey', 'Baroque music', 'Chord progressions', 'Color theory', 'Film noir', 'Constitutional law', 'Contract law',
+  'The Bill of Rights', 'Climate feedback loops', 'Ocean currents', 'The water cycle', 'Phonetics', 'The Spanish subjunctive',
+  'Japanese particles', 'Chess openings', 'Sleep cycles',
+];
 
-const prefersReducedMotion = () => typeof window !== 'undefined' && Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+/** A fresh Fisher–Yates shuffle. */
+function shuffled<T>(items: readonly T[]) {
+  const copy = [...items];
+  for (let index = copy.length - 1; index > 0; index--) {
+    const swap = Math.floor(Math.random() * (index + 1));
+    [copy[index], copy[swap]] = [copy[swap]!, copy[index]!];
+  }
+  return copy;
+}
+const CONCEPTS = [{ name: 'Light reactions', before: 0, after: 2 }, { name: 'Calvin cycle', before: 1, after: 2 }, { name: 'Chlorophyll', before: 0, after: 1 }];
+// A mix of subjects and levels, intro to upper-level. Kept short enough to fit one line on a phone.
+const ROTOR_TOPICS = [
+  'photosynthesis', 'eigenvalues', 'the Cold War', 'entropy', 'game theory',
+  'Bayes’ theorem', 'CRISPR', 'existentialism', 'big-O notation', 'the Krebs cycle',
+  'monetary policy', 'superposition', 'impressionism', 'recursion', 'plate tectonics',
+  'Kant’s ethics', 'Fourier series', 'opportunity cost', 'neural networks', 'the Renaissance',
+  'the Big Bang', 'mitosis', 'the Silk Road', 'Ohm’s law', 'derivatives',
+];
+// "it" comes back every few topics, and gets the highlighter.
+const ROTOR_WORDS = ROTOR_TOPICS.flatMap((topic, index) => (index % 5 === 0 ? ['it', topic] : [topic]));
 
 /** Steps through the demo conversation; holds still for reduced motion or a hidden tab. */
 function useDemoBeat(reduced: boolean) {
@@ -49,15 +87,51 @@ function NavActions() {
     <button type="button" className="button button--quiet" onClick={() => void signOut().then(() => window.scrollTo(0, 0))}>Sign out</button>
   </div>;
   return <div className="lp-nav-end">
-    {available && <Link className="button button--secondary" to="/account">Sign in</Link>}
+    {available && <Link className="button button--secondary" to="/account" viewTransition>Sign in</Link>}
   </div>;
 }
 
-function Ring({ value, total = 3, tone = 'accent' }: { value: number; total?: number; tone?: 'accent' | 'muted' }) {
-  return <svg className={`lp-ring lp-ring--${tone}`} viewBox="0 0 40 40" aria-hidden="true">
-    <circle cx="20" cy="20" r="16" className="lp-ring-track" />
-    <circle cx="20" cy="20" r="16" className="lp-ring-fill" style={{ '--p': value / total } as CSSProperties} />
-  </svg>;
+/** "Think you know ___?" The word rolls through topics; its width eases so the centred headline never jumps. */
+/** One rotor word. "it" is drawn twice: dark text, and a white copy on a green marker stroke that sweeps across it. */
+function RotorWord({ word, className }: { word: string; className: string }) {
+  if (word !== 'it') return <span className={`lp-rotor-word ${className}`}>{word}</span>;
+  return <span className={`lp-rotor-word lp-it ${className}`}>it<span className="lp-it-ink">it</span></span>;
+}
+
+function Rotor({ reduced }: { reduced: boolean }) {
+  const [count, setCount] = useState(0);
+  const [hidden, setHidden] = useState(false);
+  const [width, setWidth] = useState<number>();
+  const sizer = useRef<HTMLSpanElement>(null);
+  const total = ROTOR_WORDS.length;
+  const word = ROTOR_WORDS[count % total]!;
+  const previous = ROTOR_WORDS[(count + total - 1) % total]!;
+
+  useEffect(() => {
+    const onVisibility = () => setHidden(document.hidden);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, []);
+  // "it" lingers a little longer so the highlighter can finish its stroke.
+  useEffect(() => {
+    if (reduced || hidden) return;
+    const id = window.setTimeout(() => setCount((current) => current + 1), word === 'it' ? 3600 : 2400);
+    return () => window.clearTimeout(id);
+  }, [count, word, reduced, hidden]);
+  // Measures the incoming word (and re-measures when fonts load or the viewport resizes).
+  useEffect(() => {
+    const element = sizer.current;
+    if (!element || !('ResizeObserver' in window)) return;
+    const observer = new ResizeObserver(() => setWidth(element.offsetWidth));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  return <span className="lp-rotor" style={width ? { width } : undefined}>
+    <span ref={sizer} className={`lp-rotor-sizer${word === 'it' ? ' is-it' : ''}`}>{word}</span>
+    {count > 0 && <RotorWord key={`out-${count}`} word={previous} className="is-leaving" />}
+    <RotorWord key={`in-${count}`} word={word} className={count > 0 ? 'is-entering' : 'is-first'} />
+  </span>;
 }
 
 /** The hero: Alex mid-lesson, surrounded by the pieces of a real session. */
@@ -95,7 +169,7 @@ function HeroStage({ reduced }: { reduced: boolean }) {
   const widget = (depth: number, delay: number): CSSProperties => ({ '--depth': depth, '--delay': `${delay}ms` } as CSSProperties);
 
   return <div ref={stage} className="lp-stage" aria-hidden="true">
-    <div className="lp-teach lp-float" style={widget(0.35, 260)}>
+    <div className="lp-teach lp-float" data-glow style={widget(0.35, 260)}>
       <div className="lp-teach-head"><span className="lp-live-dot" />Teaching Alex<span className="lp-tag-mono">Photosynthesis</span></div>
       <div className="lp-teach-body">
         <AlexAvatar state={state} size="lg" getLevel={getLevel} />
@@ -124,7 +198,7 @@ function HeroStage({ reduced }: { reduced: boolean }) {
 
     <div className="lp-w lp-w--recheck lp-float" style={widget(1.6, 880)}>
       <Ring value={3} />
-      <div><span className="lp-w-label">Recheck</span><strong className="lp-w-big">3<small>/3</small></strong></div>
+      <div><span className="lp-w-label">Recheck</span><strong className="lp-w-big"><CountUp from={1} to={3} delay={900} /><small>/3</small></strong></div>
       <span className="lp-delta">+2</span>
     </div>
 
@@ -136,30 +210,17 @@ function HeroStage({ reduced }: { reduced: boolean }) {
 
 /** The guest view: what feynman.ai is, shown rather than told. */
 function Showcase({ reduced, onHow }: { reduced: boolean; onHow: () => void }) {
-  // On phones the three steps become a swipeable row; the dots follow the swipe and jump to a step.
-  const steps = useRef<HTMLOListElement>(null);
-  const [activeStep, setActiveStep] = useState(0);
-  const offsetOf = (index: number) => {
-    const list = steps.current; const first = list?.children[0] as HTMLElement | undefined; const card = list?.children[index] as HTMLElement | undefined;
-    return first && card ? card.offsetLeft - first.offsetLeft : 0;
-  };
-  const onStepsScroll = () => {
-    const list = steps.current; if (!list) return;
-    const width = offsetOf(1) || 1;
-    setActiveStep(Math.min(2, Math.max(0, Math.round(list.scrollLeft / width))));
-  };
-  const goToStep = (index: number) => steps.current?.scrollTo({ left: offsetOf(index), behavior: reduced ? 'auto' : 'smooth' });
-
+  const [topics] = useState(() => shuffled(TOPICS));
   return <>
     <section className="lp-hero">
       <div className="lp-aurora" aria-hidden="true"><span /><span /><span /></div>
       <div className="lp-grid" aria-hidden="true"><i /><i /><i /><i /></div>
 
       <div className="lp-hero-copy">
-        <h1 className="lp-title"><span>Think you know it?</span> <em>Prove it.</em></h1>
+        <h1 className="lp-title" aria-label="Think you know it? Prove it."><span aria-hidden="true">Think you know <span className="lp-title-line"><Rotor reduced={reduced} />?</span></span> <em aria-hidden="true">Prove it.</em></h1>
         <p className="lp-lede">Explain it to Alex. Find your gaps. Get that A+.</p>
         <div className="lp-cta">
-          <Link className="button button--primary button--lg" to="/app">Try it out<span className="button-arrow"><PracticeIcon name="arrow" size={14} /></span></Link>
+          <Link className="button button--primary button--lg" to="/app" viewTransition data-magnetic>Try it out<span className="button-arrow"><PracticeIcon name="arrow" size={14} /></span></Link>
           <button type="button" className="button button--secondary button--lg" onClick={onHow}>How it works</button>
         </div>
       </div>
@@ -169,50 +230,10 @@ function Showcase({ reduced, onHow }: { reduced: boolean; onHow: () => void }) {
     </section>
 
     <div className="lp-ticker" aria-hidden="true">
-      <div className="lp-ticker-track">{[...TOPICS, ...TOPICS].map((topic, index) => <span key={index}>{topic}<i /></span>)}</div>
+      <div className="lp-ticker-track" style={{ '--ticker-duration': `${topics.length * 2.6}s` } as CSSProperties}>{[...topics, ...topics].map((topic, index) => <span key={index}>{topic}<i /></span>)}</div>
     </div>
 
-    <section id="how" className="lp-section" aria-labelledby="how-title">
-      <div className="lp-section-head" data-reveal>
-        <span className="eyebrow">How it works</span>
-        <h2 id="how-title">Learn it by teaching it.</h2>
-      </div>
-      <ol ref={steps} className="lp-steps" onScroll={onStepsScroll}>
-        <li className="lp-step" data-reveal style={{ '--d': 0 } as CSSProperties}>
-          <div className="lp-step-visual lp-v-check" aria-hidden="true">
-            <div className="lp-v-card">
-              <div className="lp-v-progress"><i className="is-done" /><i className="is-now" /><i /></div>
-              <span className="lp-line" style={{ width: '82%' }} /><span className="lp-line" style={{ width: '56%' }} />
-              <div className="lp-v-input"><span className="lp-v-typed" /><span className="lp-caret" /></div>
-              <span className="lp-v-flag"><PracticeIcon name="info" size={12} />Not sure</span>
-            </div>
-          </div>
-          <span className="lp-step-num">01</span>
-          <h3>Check</h3>
-          <p>Three quick questions show where you stand.</p>
-        </li>
-        <li className="lp-step" data-reveal style={{ '--d': 1 } as CSSProperties}>
-          <div className="lp-step-visual lp-v-teach" aria-hidden="true">
-            <div className="lp-v-msg lp-v-msg--you"><span className="lp-line" style={{ width: '90%' }} /><span className="lp-line" style={{ width: '64%' }} /></div>
-            <div className="lp-v-row"><AlexAvatar state="idle" size="sm" /><div className="lp-v-msg lp-v-msg--alex"><span className="lp-typing"><i /><i /><i /></span><span className="lp-v-ask">But why?</span></div></div>
-          </div>
-          <span className="lp-step-num">02</span>
-          <h3>Teach</h3>
-          <p>Explain it to Alex by voice or text. Alex asks back.</p>
-        </li>
-        <li className="lp-step" data-reveal style={{ '--d': 2 } as CSSProperties}>
-          <div className="lp-step-visual lp-v-recheck" aria-hidden="true">
-            <div className="lp-v-score"><Ring value={1} tone="muted" /><span>Before</span></div>
-            <PracticeIcon name="arrow" size={18} />
-            <div className="lp-v-score"><Ring value={3} /><span>After</span></div>
-          </div>
-          <span className="lp-step-num">03</span>
-          <h3>Recheck</h3>
-          <p>New questions on the same ideas. See what stuck.</p>
-        </li>
-      </ol>
-      <div className="lp-dots">{['Check', 'Teach', 'Recheck'].map((label, index) => <button key={label} type="button" aria-label={`Show step ${index + 1}: ${label}`} aria-current={activeStep === index || undefined} onClick={() => goToStep(index)} />)}</div>
-    </section>
+    <StepsStory reduced={reduced} />
 
     <section className="lp-section lp-split" aria-labelledby="results-title">
       <div className="lp-split-copy" data-reveal>
@@ -220,16 +241,16 @@ function Showcase({ reduced, onHow }: { reduced: boolean; onHow: () => void }) {
         <h2 id="results-title">See what actually changed.</h2>
         <p>Every concept, before and after you taught it.</p>
       </div>
-      <div className="lp-results card" data-reveal aria-hidden="true">
+      <div className="lp-results card" data-reveal data-glow aria-hidden="true">
         <div className="lp-results-head">
-          <div><span className="lp-w-label">Photosynthesis</span><strong className="lp-results-score">1 <PracticeIcon name="arrow" size={18} /> <span>3<small>/3</small></span></strong></div>
+          <div><span className="lp-w-label">Photosynthesis</span><strong className="lp-results-score">1 <PracticeIcon name="arrow" size={18} /> <span><CountUp from={1} to={3} delay={700} /><small>/3</small></span></strong></div>
           <span className="badge badge--accent"><PracticeIcon name="trend" size={12} />Improved</span>
         </div>
         <ul className="lp-concepts">
           {CONCEPTS.map((concept, index) => <li key={concept.name} style={{ '--i': index } as CSSProperties}>
             <span className="lp-concept-name">{concept.name}</span>
             <span className="lp-bars"><span className="lp-bar lp-bar--before" style={{ '--v': concept.before / 2 } as CSSProperties} /><span className="lp-bar lp-bar--after" style={{ '--v': concept.after / 2 } as CSSProperties} /></span>
-            <span className="lp-concept-delta mono">{concept.after > concept.before ? `+${concept.after - concept.before}` : '='}</span>
+            <span className="lp-concept-delta mono">{concept.after > concept.before ? <>+<CountUp to={concept.after - concept.before} delay={900 + index * 140} /></> : '='}</span>
           </li>)}
         </ul>
         <div className="lp-results-legend"><span><i className="lp-key lp-key--before" />Before</span><span><i className="lp-key lp-key--after" />After</span></div>
@@ -240,7 +261,7 @@ function Showcase({ reduced, onHow }: { reduced: boolean; onHow: () => void }) {
       <div className="lp-final-glow" aria-hidden="true" />
       <div className="lp-final-alex"><AlexAvatar state="listening" size="md" /></div>
       <h2 id="final-title">Your turn to teach.</h2>
-      <Link className="button button--lg lp-button-light" to="/app">Try it out<span className="button-arrow"><PracticeIcon name="arrow" size={14} /></span></Link>
+      <Link className="button button--lg lp-button-light" to="/app" viewTransition data-magnetic>Try it out<span className="button-arrow"><PracticeIcon name="arrow" size={14} /></span></Link>
     </section>
   </>;
 }
@@ -253,6 +274,7 @@ export function LandingPage() {
   // Signed-in learners get their own home; nothing renders until the saved sign-in has been checked, so it never flashes.
   const view = loading ? 'loading' : user ? 'home' : 'guest';
   useReveal(root, view);
+  usePointerEffects(root, !reduced);
 
   useEffect(() => {
     window.scrollTo(0, 0);

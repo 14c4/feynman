@@ -27,7 +27,7 @@ export function AccountPage() {
     <p className="account-lede">Your sessions are saved to your account, so you can leave and come back to them any time from Home.</p>
     <div className="button-row">
       <Link className="button button--primary" to="/app">Go to your sessions</Link>
-      <Button variant="secondary" onClick={() => void signOut().then(() => navigate('/'))}>Sign out</Button>
+      <Button variant="secondary" onClick={() => void signOut().then(() => navigate('/', { viewTransition: true }))}>Sign out</Button>
     </div>
   </section>;
 
@@ -38,8 +38,8 @@ export function AccountPage() {
     if (mode === 'signup' && password.length < MIN_PASSWORD) { setError(`Use at least ${MIN_PASSWORD} characters for your password.`); return; }
     setBusy(true);
     try {
-      if (mode === 'signin') { await signIn(email, password); await navigate('/app'); }
-      else if (await signUp(email, password) === 'signed-in') await navigate('/app');
+      if (mode === 'signin') { await signIn(email, password); await navigate('/app', { viewTransition: true }); }
+      else if (await signUp(email, password) === 'signed-in') await navigate('/app', { viewTransition: true });
       else { setNotice(`We sent a confirmation link to ${email.trim()}. Open it, then come back and sign in.`); setMode('signin'); setPassword(''); }
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Something went wrong. Please try again.'); }
     finally { setBusy(false); }

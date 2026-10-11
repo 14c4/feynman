@@ -7,7 +7,7 @@ import { StudyStepper } from './StudyStepper';
 import './layout.css';
 
 export function Brand() {
-  return <Link to="/" className="brand" aria-label="feynman.ai home"><span className="brand-mark" aria-hidden="true">f</span><span>feynman<span className="brand-suffix">.ai</span></span></Link>;
+  return <Link to="/" viewTransition className="brand" aria-label="feynman.ai home"><span className="brand-mark" aria-hidden="true">f</span><span>feynman<span className="brand-suffix">.ai</span></span></Link>;
 }
 
 function ModeBadge({ mode }: { mode?: 'real' | 'mock' }) {
@@ -22,7 +22,7 @@ function AccountMenu() {
   if (!available || loading) return null;
   if (!user) return <Link to="/account" className="button button--secondary button--sm">Sign in</Link>;
   return <div className="account-chip"><span className="account-email" title={user.email}>{user.email}</span>
-    <button type="button" className="button button--quiet button--sm" onClick={() => void signOut().then(() => navigate('/'))}>Sign out</button></div>;
+    <button type="button" className="button button--quiet button--sm" onClick={() => void signOut().then(() => navigate('/', { viewTransition: true }))}>Sign out</button></div>;
 }
 
 export function AppLayout() {

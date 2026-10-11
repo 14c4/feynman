@@ -68,3 +68,6 @@
   .stepper-item { height: 34px; }
   .focus-main { padding: var(--s-8) var(--s-4) var(--s-16); }
 }
+
+/* The header logo is the same element across pages during a view transition. */
+.lp-nav .brand, .topbar .brand, .focus-bar .brand { view-transition-name: brand; }
