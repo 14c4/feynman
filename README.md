@@ -49,7 +49,7 @@ Students preparing for exams often can't tell the difference between *feeling* r
 ### Learning loop
 - Server-side text extraction from uploads. Only bounded excerpts reach the AI providers.
 - Expected answers, rubrics and reserved follow-up questions stay in a private server blueprint and never reach the browser.
-- Answers autosave (browser draft, then server), survive refresh, and support pause/resume.
+- Answers sync to the server while you work. Sessions live in this tab's memory only: there is no history, browser saving, or pause/resume.
 - Grading uses a 0–2 rubric per question with evidence quoted from your own answer. Invented evidence is rejected.
 
 ### Teaching Alex
@@ -84,7 +84,7 @@ Browser (React + Vite)                         Node API (http, no framework)
 
 | Area | Location |
 | --- | --- |
-| Routes and pages | `src/app/App.tsx` (`/`, `/study/:id`, `/results/:id`, `/preview`) |
+| Routes and pages | `src/app/App.tsx` (`/`, `/study/:id`, `/results/:id`) |
 | Study flow | `src/features/study/` |
 | Readiness Insights and camera | `src/features/insights/` |
 | Results | `src/features/feedback/ResultsPage.tsx` |
@@ -161,8 +161,6 @@ npx tsx server/index.ts   # does not load .env, so no real keys are used
 ```
 
 Fixture answers for the first check are `5`, `12` and `4`, with working for full marks. `MOCK_PROVIDER_SCENARIO` can simulate failures: `clarification`, `prepare-error-once`, `grade-error-once` or `reply-error-once`.
-
-`/preview` is a separate design preview with sample data. It makes no API calls.
 
 ## Quality
 

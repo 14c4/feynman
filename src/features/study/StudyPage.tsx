@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ConversationProvider, useConversation } from '@elevenlabs/react';
-import { Link, Navigate, useNavigate, useParams } from 'react-router';
+import { Link, Navigate, useParams } from 'react-router';
 import { Button } from '../../components/Button';
 import { EmptyState } from '../../components/EmptyState';
 import type { AssessmentAttempt, PracticeSession, TranscriptMessage } from '../../../shared/types';
@@ -13,6 +13,7 @@ import { AlexAvatar } from './AlexAvatar';
 import { ALEX_LABELS, type AlexState } from './alexState';
 import { QuestionCard, type SaveState } from './QuestionCard';
 import { PresagePanel } from '../insights/PresagePanel';
+import { START_RECHECK_EVENT } from './stages';
 import './study.css';
 
 export function StudyPage() {
@@ -32,8 +33,7 @@ function StatusCard({ title, children, busy = false, tone = 'neutral', icon = 'i
 }
 
 function AssessmentPanel({ session, attempt }: { session: PracticeSession; attempt: AssessmentAttempt }) {
-  const { updateDraft, submitAssessment, busy, setNervousness, draftStatus, saveDraft, storageError, startAttempt, returnToTeaching } = useSessions();
-  const [ratingSkipped, setRatingSkipped] = useState(false);
+  const { updateDraft, submitAssessment, busy, draftStatus, saveDraft, startAttempt } = useSessions();
   const [submitting, setSubmitting] = useState(false);
   const index = attempt.currentQuestionIndex;
   const question = attempt.questions[index];
@@ -53,31 +53,15 @@ function AssessmentPanel({ session, attempt }: { session: PracticeSession; attem
   }
   if (submitting) return <StatusCard title="Checking your answers…" busy><p className="muted">Your responses are saved. This usually takes a few seconds.</p></StatusCard>;
   const status = draftStatus[session.id];
-  const saveState: SaveState = storageError ? 'unavailable' : status === 'local' ? 'local' : status === 'saving' ? 'saving' : status === 'saved' ? 'saved' : 'clean';
-  const showRating = attempt.kind === 'baseline' && !ratingSkipped;
-  return <div className={`assess ${showRating ? '' : 'assess--single'}`}>
+  const saveState: SaveState = status === 'local' ? 'local' : status === 'saving' ? 'saving' : status === 'saved' ? 'saved' : 'clean';
+  return <div className="assess assess--single">
     <div className="assess-main">
-      {recheck && <div className="notice notice--accent enter recheck-notice"><PracticeIcon name="refresh" size={16} /><p><strong>Follow-up questions.</strong> These are new questions on the same concepts you just taught. Answer from your own understanding.</p>
-        <Button variant="secondary" size="sm" disabled={busy[session.id] || session.lifecycle !== 'active'} onClick={() => void returnToTeaching(session.id).catch(() => undefined)}><PracticeIcon name="back" size={14} />Back to Alex</Button></div>}
       <QuestionCard question={question} answer={answer} index={index} count={attempt.questions.length} saveState={saveState} disabled={busy[session.id]}
         conceptTitle={session.concepts.find((concept) => concept.id === question.conceptId)?.title}
         submitLabel={recheck ? 'Submit follow-up' : 'Check my answers'}
         onChange={(updated) => updateDraft(session.id, attempt.id, updated)} onBack={() => updateDraft(session.id, attempt.id, answer, index - 1)} onNext={move} />
-      <div className="assess-foot">
-        <p><PracticeIcon name="info" size={14} />No hints or corrections during the check. Feedback comes at the end.</p>
-        <span className="assess-kbd">Ctrl + Enter to continue</span>
-      </div>
       {status === 'local' && <Button variant="secondary" size="sm" onClick={() => void saveDraft(session.id).catch(() => undefined)}><PracticeIcon name="refresh" size={14} />Retry saving answers</Button>}
     </div>
-    {showRating && <aside className="assess-aside">
-      <section className="rating card" aria-labelledby="rating-heading">
-        <h3 id="rating-heading">How nervous do you feel right now?</h3>
-        <p className="muted small">Optional self-report. It’s just for your own reflection, not a diagnosis.</p>
-        <div className="rating-scale" role="group" aria-labelledby="rating-heading">{([1, 2, 3, 4, 5] as const).map((value) => <button key={value} type="button" disabled={busy[session.id]} aria-label={`Before practice nervousness ${value} of 5`} aria-pressed={session.nervousnessBefore === value} onClick={() => void setNervousness(session.id, 'before', value).catch(() => undefined)}>{value}</button>)}</div>
-        <div className="rating-ends"><span>Not at all</span><span>Very</span></div>
-        <button type="button" className="text-button" disabled={busy[session.id]} onClick={() => { setRatingSkipped(true); if (session.nervousnessBefore !== undefined) void setNervousness(session.id, 'before', null).catch(() => undefined); }}>Skip this check-in</button>
-      </section>
-    </aside>}
   </div>;
 }
 
@@ -171,8 +155,7 @@ function useUserSpeaking(active: boolean, getInputVolume: () => number) {
 }
 
 function TeachingPanel({ session }: { session: PracticeSession }) {
-  const { requestVoice, registerConversation, finalizeConversation, startRecheck, saveAndExit, busy, errors, integration } = useSessions();
-  const navigate = useNavigate();
+  const { requestVoice, registerConversation, finalizeConversation, startRecheck, busy, errors, integration } = useSessions();
   const mock = session.providerMode === 'mock';
   const voiceAvailable = !mock && integration?.voiceConfigured === true;
   const [mode, setMode] = useState<'voice' | 'text'>(() => voiceAvailable ? 'voice' : 'text');
@@ -237,13 +220,14 @@ function TeachingPanel({ session }: { session: PracticeSession }) {
     try { hangUp(); await startRecheck(session.id); }
     catch { /* The session store displays the error and preserves progress. */ }
   }
-  async function exit() {
-    try { hangUp(); await saveAndExit(session.id); void navigate('/'); }
-    catch { /* The session store displays the error. */ }
-  }
+  const nextStep = useRef(next);
+  useEffect(() => { nextStep.current = next; });
+  useEffect(() => {
+    const go = () => void nextStep.current();
+    window.addEventListener(START_RECHECK_EVENT, go);
+    return () => window.removeEventListener(START_RECHECK_EVENT, go);
+  }, []);
   const cycle = session.cycles.find((item) => item.id === session.currentCycleId) ?? session.cycles[0];
-  const focus = cycle.focusConceptIds.length ? session.concepts.filter((concept) => cycle.focusConceptIds.includes(concept.id)) : session.concepts;
-  const baselineGrade = session.attempts.find((item) => item.kind === 'baseline')?.grade;
   const hasConversation = cycle.conversations.some((segment) => segment.messages.some((message) => message.role === 'learner') || segment.channel !== 'text');
   const voiceEnded = cycle.conversations.some((segment) => segment.channel !== 'text' && segment.endedAt);
   const lastLive = messages.at(-1);
@@ -295,21 +279,6 @@ function TeachingPanel({ session }: { session: PracticeSession }) {
 
       <aside className="teach-side">
         <PresagePanel session={session} />
-        <section className="side-card card">
-          <span className="eyebrow">Topic</span>
-          <h3>{session.title}</h3>
-          <span className="eyebrow side-label">Focus concepts</span>
-          <ul className="focus-list">{focus.map((concept) => {
-            const grade = baselineGrade?.questionGrades.find((item) => item.conceptId === concept.id);
-            return <li key={concept.id}><div><strong>{concept.title}</strong>{concept.description && <p>{concept.description}</p>}</div>
-              {grade && <span className="score-dots" aria-label={`First check: ${grade.score} of ${grade.maxScore}`}>{Array.from({ length: grade.maxScore }, (_, step) => <i key={step} className={step < grade.score ? 'is-on' : ''} />)}</span>}</li>;
-          })}</ul>
-          {baselineGrade && <p className="side-note">{mock ? 'DEV MOCK test grade' : 'First check'}: <span className="mono">{baselineGrade.totalScore}/{baselineGrade.maxScore}</span>. {baselineGrade.summary}</p>}
-        </section>
-        <section className="side-card side-card--tips card">
-          <span className="eyebrow">Teaching tips</span>
-          <ul className="tips"><li>Start with the big idea, then the steps.</li><li>Use an example Alex could picture.</li><li>When Alex asks “why?”, go one level deeper.</li></ul>
-        </section>
         {session.notes && <details className="disclosure"><summary>Your notes<PracticeIcon name="chevron" size={14} /></summary><div className="disclosure-body"><p className="notes-text">{session.notes}</p></div></details>}
       </aside>
     </div>
@@ -318,9 +287,7 @@ function TeachingPanel({ session }: { session: PracticeSession }) {
     {errors[session.id] && <p role="alert" className="notice notice--danger"><PracticeIcon name="alert" size={16} />{errors[session.id]}</p>}
 
     <div className="teach-foot">
-      <Button variant="quiet" onClick={() => void exit()} disabled={busy[session.id]}>Save &amp; exit</Button>
       <div className="teach-foot-end">
-        <span className="teach-foot-hint">{hasConversation ? 'Done explaining? Three new questions are next.' : 'Teach Alex first, then answer three new questions.'}</span>
         <Button onClick={() => void next()} disabled={busy[session.id] || session.lifecycle !== 'active'}>{mock && !hasConversation ? 'DEV MOCK: skip teaching (test only)' : followUpWaiting ? 'Continue the follow-up questions' : 'I’m ready for the follow-up questions'}<PracticeIcon name="arrow" size={16} /></Button>
       </div>
     </div>
@@ -337,35 +304,29 @@ function Overview({ session, onBegin }: { session: PracticeSession; onBegin: () 
       {session.materials?.length ? <ul className="material-list" aria-label="Uploaded files">{session.materials.map((material) => <li key={material.id}><PracticeIcon name="file" size={14} /><span>{material.name}</span>
         <span className="muted">{material.pages ? `${material.pages} ${material.pages === 1 ? 'page' : 'pages'}` : `${Math.round(material.characters / 1000)}k chars`}{material.truncated ? ' · beginning used' : ''}</span></li>)}</ul> : null}
     </div>
-    <div>
-      <h3 className="overview-label">Three concepts to practise</h3>
-      <ol className="concept-grid">{session.concepts.map((concept, index) => <li key={concept.id} className="concept-card card"><span className="concept-num mono">0{index + 1}</span><strong>{concept.title}</strong>{concept.description && <p>{concept.description}</p>}</li>)}</ol>
-    </div>
-    <div className="overview-flow card">
-      <ol className="flow">
-        <li className="is-next"><span className="flow-dot" /><div><strong>Quick check</strong><span>3 questions · no feedback until the end</span></div></li>
-        <li><span className="flow-dot" /><div><strong>Teach Alex</strong><span>Explain the ideas by voice or text</span></div></li>
-        <li><span className="flow-dot" /><div><strong>Follow-up</strong><span>3 new questions on the same concepts</span></div></li>
-        <li><span className="flow-dot" /><div><strong>Reflect</strong><span>See what changed</span></div></li>
-      </ol>
+    <section className="concepts card" aria-labelledby="concepts-heading">
+      <h3 id="concepts-heading">Three concepts to practise</h3>
+      <ol className="concept-list">{session.concepts.map((concept, index) => <li key={concept.id}><span className="concept-num mono">{index + 1}</span><div><strong>{concept.title}</strong>{concept.description && <p>{concept.description}</p>}</div></li>)}</ol>
+    </section>
+    <div className="overview-start">
       <Button size="lg" onClick={onBegin}>Start the 3-question check<PracticeIcon name="arrow" size={18} /></Button>
     </div>
   </section>;
 }
 
 const HEADINGS: Record<PracticeSession['stage'], { eyebrow: string; title: (session: PracticeSession) => string }> = {
-  preparing: { eyebrow: 'Preparation', title: () => 'Preparing your session' },
-  baseline: { eyebrow: 'First check', title: () => 'Let’s see what you remember' },
-  baseline_evaluating: { eyebrow: 'First check', title: () => 'Checking your answers' },
-  teaching: { eyebrow: 'Teach Alex', title: (session) => session.title },
+  preparing: { eyebrow: '', title: () => 'Preparing your session' },
+  baseline: { eyebrow: '', title: () => 'Let’s see what you remember' },
+  baseline_evaluating: { eyebrow: '', title: () => 'Checking your answers' },
+  teaching: { eyebrow: '', title: (session) => session.title },
   recheck: { eyebrow: 'Follow-up check', title: () => 'Show what you’ve explained' },
   recheck_evaluating: { eyebrow: 'Follow-up check', title: () => 'Checking your answers' },
   results: { eyebrow: 'Results', title: (session) => session.title },
 };
 
 function StudyContent({ sessionId }: { sessionId: string }) {
-  const { sessions, busy, errors, errorStatuses, storageError, loadSession, prepareSession, submitAssessment, saveAndExit, resumeSession } = useSessions();
-  const session = sessions[sessionId]; const navigate = useNavigate(); const started = useRef(false);
+  const { sessions, busy, errors, errorStatuses, loadSession, prepareSession, submitAssessment, returnToTeaching } = useSessions();
+  const session = sessions[sessionId]; const started = useRef(false);
   const [clarification, setClarification] = useState('');
   const [overviewDone, setOverviewDone] = useState(false);
   useEffect(() => {
@@ -373,30 +334,28 @@ function StudyContent({ sessionId }: { sessionId: string }) {
   }, [loadSession, session, sessionId]);
   if (!session) return <EmptyState loading={busy[sessionId]} title={busy[sessionId] ? 'Opening your session…' : 'Session unavailable'} description={busy[sessionId] ? 'Fetching your saved progress.' : errors[sessionId] ?? 'Open a session from Home, or start a new one.'} />;
   if (errorStatuses[sessionId] === 404 || errorStatuses[sessionId] === 401) return <div className="study">
-    <StatusCard level={1} title="Session unavailable on the server" tone="error"><p>{errors[sessionId]}</p><p className="muted">Your browser drafts are kept below. Restarting the in-memory API clears server sessions; start a new practice if this session cannot be reopened.</p>
+    <StatusCard level={1} title="Session unavailable on the server" tone="error"><p>{errors[sessionId]}</p><p className="muted">Sessions are kept only while this tab stays open and the server is running. Start a new session if this one cannot be reopened.</p>
       <div className="button-row"><Button disabled={busy[sessionId]} onClick={() => void loadSession(sessionId).catch(() => undefined)}><PracticeIcon name="refresh" size={16} />Retry loading session</Button><Link className="button button--secondary" to="/">Start a new session</Link></div></StatusCard>
-    <details className="disclosure"><summary>Review browser drafts<PracticeIcon name="chevron" size={14} /></summary><div className="disclosure-body answer-review">{session.attempts.map((attempt) => <section key={attempt.id}>{attempt.questions.map((question, index) => <article key={question.id}><h4>{question.prompt}</h4><p>{attempt.answers[index]?.text || 'No typed answer'}</p>{attempt.answers[index]?.working && <p className="muted">{attempt.answers[index]?.working}</p>}<p className="muted small">{attempt.answers[index]?.skipped ? 'Skipped' : ''}{attempt.answers[index]?.uncertain ? ' · Marked unsure' : ''}</p></article>)}</section>)}</div></details>
+    <details className="disclosure"><summary>Review your answers<PracticeIcon name="chevron" size={14} /></summary><div className="disclosure-body answer-review">{session.attempts.map((attempt) => <section key={attempt.id}>{attempt.questions.map((question, index) => <article key={question.id}><h4>{question.prompt}</h4><p>{attempt.answers[index]?.text || 'No typed answer'}</p>{attempt.answers[index]?.working && <p className="muted">{attempt.answers[index]?.working}</p>}<p className="muted small">{attempt.answers[index]?.skipped ? 'Skipped' : ''}{attempt.answers[index]?.uncertain ? ' · Marked unsure' : ''}</p></article>)}</section>)}</div></details>
   </div>;
   if (session.stage === 'results') return <Navigate to={`/results/${session.id}`} replace />;
-  const exit = async () => { try { await saveAndExit(sessionId); void navigate('/'); } catch { /* Error shown below. */ } };
   const error = errors[sessionId] || session.operationError || (session.stage === 'preparing' ? session.preparation.message : undefined);
   const attempt = session.attempts.find((item) => item.kind === (session.stage.startsWith('baseline') ? 'baseline' : 'recheck'));
   const preparing = session.stage === 'preparing';
   const fresh = session.stage === 'baseline' && attempt && attempt.currentQuestionIndex === 0 && attempt.answers.every((answer) => !answer.text && !answer.working && !answer.skipped);
   const heading = HEADINGS[session.stage];
-  const showOverview = fresh && !overviewDone && session.lifecycle !== 'paused';
+  const showOverview = fresh && !overviewDone;
   const focusField = <>
     <div className="field status-card-field"><label className="field-label" htmlFor="clarification">Your focus</label><textarea id="clarification" className="textarea" value={clarification} maxLength={PRACTICE_LIMITS.description} onChange={(event) => setClarification(event.target.value)} rows={3} /></div>
     <div className="button-row"><Button disabled={!clarification.trim()} onClick={() => void prepareSession(sessionId, clarification).catch(() => undefined)}>Continue</Button></div>
   </>;
   return <div className={`study study--${session.stage}`}>
     <header className="study-head">
-      <div><span className="eyebrow">{heading.eyebrow}</span><h1 tabIndex={-1}>{showOverview ? 'Here’s what we’ll practise' : heading.title(session)}</h1>{session.stage !== 'teaching' && !showOverview && <p className="muted">{session.stage === 'preparing' ? session.description || 'Reading your study material' : session.title}</p>}</div>
-      {session.stage !== 'teaching' && <Button variant="secondary" size="sm" onClick={() => void exit()} disabled={busy[sessionId]}>Save &amp; exit</Button>}
+      <div>{heading.eyebrow && <span className="eyebrow">{heading.eyebrow}</span>}<h1 tabIndex={-1}>{showOverview ? 'Here’s what we’ll practise' : heading.title(session)}</h1>{session.stage !== 'teaching' && session.stage !== 'preparing' && session.stage !== 'baseline' && session.stage !== 'recheck' && !showOverview && <p className="muted">{session.title}</p>}</div>
+      {session.stage === 'recheck' && <Button variant="secondary" size="sm" disabled={busy[sessionId] || session.lifecycle !== 'active'} onClick={() => void returnToTeaching(sessionId).catch(() => undefined)}><PracticeIcon name="back" size={14} />Back to Alex</Button>}
     </header>
-    {session.stage === 'teaching' && session.lifecycle !== 'paused' ? <ConversationProvider><TeachingPanel session={session} /></ConversationProvider> : <div className="study-split"><div className="study-main">
-    {session.lifecycle === 'paused' ? <StatusCard title="Your session is paused" icon="pause"><p className="muted">Everything you’ve written is saved. Pick up right where you left off.</p><Button disabled={busy[sessionId]} onClick={() => void resumeSession(sessionId).catch(() => undefined)}>Continue session<PracticeIcon name="arrow" size={16} /></Button></StatusCard> :
-      preparing ? (busy[sessionId] ? <StatusCard busy title={session.materials?.length ? `Reading ${session.materials.length === 1 ? 'your file' : 'your files'}…` : 'Preparing your questions…'}><p className="muted">Finding three core concepts and writing a short check for each.</p></StatusCard>
+    {session.stage === 'teaching' ? <ConversationProvider><TeachingPanel session={session} /></ConversationProvider> : <div className="study-split"><div className="study-main">
+    {preparing ? (busy[sessionId] ? <StatusCard busy title={session.materials?.length ? `Reading ${session.materials.length === 1 ? 'your file' : 'your files'}…` : 'Preparing your questions…'}></StatusCard>
         : <section className="status-card card enter" aria-live="polite">
           {session.preparation.status === 'clarification' && session.preparation.clarificationQuestion ? <>
             <span className="status-card-icon"><PracticeIcon name="message" /></span>
@@ -426,6 +385,5 @@ function StudyContent({ sessionId }: { sessionId: string }) {
     {error && <p className="notice notice--danger" role="alert"><PracticeIcon name="alert" size={16} />{error}</p>}
     {session.stage === 'recheck' && <ConversationList session={session} showMessages={false} />}
     </div><PresagePanel session={session} /></div>}
-    {storageError && <p className="notice notice--warning" role="alert"><PracticeIcon name="alert" size={16} />{storageError}</p>}
   </div>;
 }

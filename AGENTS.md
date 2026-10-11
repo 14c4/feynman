@@ -20,9 +20,7 @@ It is an educational tool. Optional nervousness ratings are self-reported reflec
   - *Text*: standalone server-backed conversation (Gemini `alexReply`), no microphone needed, 30-turn cap, retry for a failed reply.
   - Alex avatar reflects real state (idle, connecting, listening, user speaking, thinking, responding, interrupted, ended); voice mode follows live audio volume.
 - **Recheck and results** — matched follow-up questions on the same concepts, before/after comparison, per-concept outcomes, "practise again" prefill on Home, expandable question feedback and transcripts, optional after-rating, finish.
-- **Session management** — history list with resume/review, multi-select delete, pause/resume, refresh recovery, read-only browser drafts when the server lost a session.
 - **DEV MOCK mode** — deterministic arithmetic fixtures, scripted labeled Alex text replies, voice disabled, and a labeled *test-only* teaching bypass. Only allowed with `NODE_ENV=development|test`; every mock surface is labeled.
-- **`/preview`** — isolated sample-data design preview; not part of the live loop and makes no API calls.
 
 **Limits worth knowing:** sessions live in a process-memory `Map` (`MemorySessionStore`); restarting the API loses them. Extra practice cycles (`POST /cycles`) return 501. No auth, rate limiting or durable storage yet. Automated tests use mocks only; real Gemini/ElevenLabs behavior is verified manually.
 
@@ -30,8 +28,8 @@ It is an educational tool. Optional nervousness ratings are self-reported reflec
 
 | Area | Files |
 | --- | --- |
-| Routes / pages | `src/app/App.tsx` — `/`, `/study/:sessionId`, `/results/:sessionId`, lazy `/preview/:screen?` |
-| Shell & navigation | `src/components/AppLayout.tsx`, `layout.css` (sidebar; focus bar + stepper during study) |
+| Routes / pages | `src/app/App.tsx` — `/`, `/study/:sessionId`, `/results/:sessionId` |
+| Shell & navigation | `src/components/AppLayout.tsx`, `layout.css` (top bar; focus bar + stepper during study) |
 | Home | `src/features/topics/HomePage.tsx`, `StudyComposer.tsx`, `home.css` |
 | Study flow | `src/features/study/StudyPage.tsx` (prep, overview, assessment, teaching), `QuestionCard.tsx`, `AlexAvatar.tsx`, `alexState.ts`, `ConversationStatus.tsx`, `stages.ts`, `study.css` |
 | Results | `src/features/feedback/ResultsPage.tsx`, `feedback.css` |
@@ -41,7 +39,7 @@ It is an educational tool. Optional nervousness ratings are self-reported reflec
 | Backend | `server/index.ts`, `routes.ts` (all `/api` endpoints), `domain.ts` (validation, grading flow), `providers.ts` (Gemini + ElevenLabs), `developmentProviders.ts` (mock), `alex.ts` (persona/context), `materials.ts` (extraction), `store.ts` |
 | Tests | `tests/*.test.ts` via Node test runner (`npm test`); `tests/stage1.test.ts` covers the full mock cycle |
 
-Unused legacy components remain in `src/features/study/` and `src/features/feedback/` (e.g. `MicrophoneControl`, `StudentAvatar` — the latter still used by `/preview`). `/preview` keeps its own `practice.css`.
+Unused legacy components remain in `src/features/study/` and `src/features/feedback/` (e.g. `MicrophoneControl`, `StudentAvatar`).
 
 **Server environment** (backend only; never `VITE_`-prefixed): `GEMINI_API_KEY`, `GEMINI_MODEL` (default `gemini-2.5-flash`), `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID`, `PRACTICE_PROVIDER_MODE` (`real` default | `mock`), `MOCK_PROVIDER_SCENARIO` (`normal`, `clarification`, `prepare-error-once`, `grade-error-once`, `reply-error-once`), `MOCK_PROVIDER_DELAY_MS`, `PORT` (3001), `HOST`.
 

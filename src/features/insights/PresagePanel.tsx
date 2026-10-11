@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { PhysiologySample, PracticeSession } from '../../../shared/types';
 import { MONITORING_LIMITS } from '../../../shared/types';
 import { Button } from '../../components/Button';
@@ -134,8 +134,11 @@ function Diagnostics({ state, simulated }: { state: MonitorState; simulated: boo
   );
   const problem = sdk?.decodeErrors ? `${sdk.decodeErrors} Presage updates could not be read${sdk.lastDecodeError ? `: ${sdk.lastDecodeError}` : '.'}` : sdk?.decoder === 'unavailable' ? sdk.lastDecodeError : undefined;
   return <div className="presage-diag">
-    <dl>{rows.map((row) => <div key={row.label} title={row.title}><dt>{row.label}</dt><dd data-tone={row.tone}>{row.value}</dd></div>)}</dl>
     {problem && <p className="presage-diag-error" role="alert">{problem}</p>}
+    <details>
+      <summary>Signal details</summary>
+      <dl>{rows.map((row) => <div key={row.label} title={row.title}><dt>{row.label}</dt><dd data-tone={row.tone}>{row.value}</dd></div>)}</dl>
+    </details>
   </div>;
 }
 
@@ -146,12 +149,17 @@ function Diagnostics({ state, simulated }: { state: MonitorState; simulated: boo
  * an honest status built only from real signals, and readings with their quality. Off by default;
  * the camera starts only after the learner chooses to, and stops when they leave the session.
  */
+/** A section whose height animates to zero when closed; hidden content leaves the tab order. */
+function Collapsible({ open, id, children }: { open: boolean; id?: string; children: ReactNode }) {
+  return <div className="presage-collapse" id={id} data-open={open}><div className="presage-collapse-inner" aria-hidden={!open}>{children}</div></div>;
+}
+
 export function PresagePanel({ session, layout = 'rail' }: { session: PracticeSession; layout?: 'rail' | 'inline' }) {
   const { integration } = useSessions();
   const { state, stream, tracking, start, stop, dismiss } = useMonitor();
-  const [minimized, setMinimized] = useState(false);
-  const [explain, setExplain] = useState(false);
+  const [hidden, setHidden] = useState<boolean>();
   const health = integration?.physiology;
+  const minimized = hidden ?? health?.available === false;
   const mine = !state.sessionId || state.sessionId === session.id;
   const active = mine && (state.phase === 'requesting' || state.phase === 'calibrating' || state.phase === 'monitoring' || state.phase === 'stopping');
   const now = useNow(active, 500);
@@ -160,40 +168,38 @@ export function PresagePanel({ session, layout = 'rail' }: { session: PracticeSe
   useEffect(() => { if (!saved) return; const timer = setTimeout(dismiss, 12_000); return () => clearTimeout(timer); }, [saved, dismiss]);
   if (!health || session.lifecycle !== 'active' && !active) return null;
   const simulated = (active ? state.source : health.source) === 'simulated';
-  const className = `presage-panel card presage-panel--${layout} ${active ? 'is-active' : ''} ${minimized && active ? 'is-minimized' : ''}`;
+  const className = `presage-panel card presage-panel--${layout} ${active ? 'is-active' : ''} ${minimized ? 'is-minimized' : ''}`;
+  // The arrow is always available: it hides or shows everything below the header, camera on or off.
+  const toggle = <button type="button" className="icon-button presage-toggle" aria-expanded={!minimized} aria-controls="presage-body"
+    aria-label={minimized ? 'Show the Presage panel' : 'Hide the Presage panel'} onClick={() => setHidden(!minimized)}><PracticeIcon name="chevron" size={14} /></button>;
 
   if (!health.available) return <section className={`${className} presage-panel--off`} aria-label="Presage camera insights">
-    <header className="presage-head"><span className="presage-mark"><PracticeIcon name="camera" size={15} /></span><div><strong>Presage is off on this server</strong><small>{health.reason}</small></div></header>
-    <p className="small muted">Your learning results and confidence tracking work without it.</p>
+    <header className="presage-head"><span className="presage-mark"><PracticeIcon name="camera" size={15} /></span><div><strong>Presage is off on this server</strong><small>{health.reason}</small></div>{toggle}</header>
+    <Collapsible open={!minimized} id="presage-body"><p className="small muted">Your learning results and confidence tracking work without it.</p></Collapsible>
   </section>;
 
   if (!active) {
     const purpose = purposeFor(session);
     const error = mine && state.phase === 'error' ? state.error : undefined;
     const finished = mine ? state.finished : undefined;
+    // Starting the camera always reveals the panel so the learner sees what is being captured.
+    const begin = (seconds?: number) => { setHidden(false); void start(session.id, purpose, seconds); };
     return <section className={className} aria-labelledby="presage-title">
       <header className="presage-head">
         <span className="presage-mark"><PracticeIcon name="camera" size={15} /></span>
         <div><strong id="presage-title">Presage camera insights</strong><small>Pulse, breathing and face tracking from your camera</small></div>
         {simulated && <span className="badge badge--warning badge--mono">DEV SIMULATED</span>}
+        {toggle}
       </header>
-      <div className="presage-stage presage-stage--off"><div className="presage-stage-empty"><PracticeIcon name="camera" size={30} /><span>Camera is off</span></div></div>
-      {finished && <p className="notice notice--accent presage-note" role="status"><PracticeIcon name="check" size={14} />{finished.valid ? `${finished.valid} reliable ${finished.source === 'simulated' ? 'simulated ' : ''}readings were added to your timeline.` : 'No readings were reliable enough to keep. That’s common with movement or low light; your learning results are unaffected.'}{finished.reason ? ` ${finished.reason}` : ''}</p>}
-      {error && <p className="notice notice--warning presage-note" role="alert"><PracticeIcon name="alert" size={14} /><span>{error}</span><button type="button" className="icon-button" aria-label="Dismiss" onClick={dismiss}><PracticeIcon name="close" size={12} /></button></p>}
-      <p className="small muted presage-lede">See Presage track your face live, and keep pulse and breathing readings alongside your learning timeline. Optional, and you can stop any time.</p>
-      <div className="presage-actions">
-        <Button variant="secondary" onClick={() => void start(session.id, purpose)}><PracticeIcon name="camera" size={15} />Turn on camera</Button>
-        <Button variant="quiet" onClick={() => void start(session.id, purpose, CHECKIN_SECONDS)}><PracticeIcon name="clock" size={14} />{CHECKIN_SECONDS}-second check-in</Button>
-      </div>
-      <button type="button" className="text-button presage-explain" aria-expanded={explain} onClick={() => setExplain((value) => !value)}>What happens to my video?<PracticeIcon name="chevron" size={12} /></button>
-      {explain && <ul className="presage-consent small">
-        <li>Face tracking runs <strong>on this device</strong>; nothing it sees is uploaded.</li>
-        {simulated ? <li><strong>Development mode:</strong> pulse and breathing are synthetic test values; no frames are sent.</li>
-          : <li>Small, low-resolution frames go to this app’s server, where Presage SmartSpectra estimates pulse and breathing. Frames are processed and discarded; <strong>no video is stored</strong>.</li>}
-        <li>Live values appear as soon as Presage reports them, marked preliminary until they meet Presage’s reliability rules. Only reliable readings are kept in your timeline.</li>
-        <li>They are reflective information, <strong>not a diagnosis</strong>, and not a measure of anxiety, attention or understanding.</li>
-        <li>Leaving the session turns the camera off.</li>
-      </ul>}
+      <Collapsible open={!minimized} id="presage-body">
+        <div className="presage-stage presage-stage--off"><div className="presage-stage-empty"><PracticeIcon name="camera" size={30} /><span>Camera is off</span></div></div>
+        {finished && <p className="notice notice--accent presage-note" role="status"><PracticeIcon name="check" size={14} />{finished.valid ? `${finished.valid} reliable ${finished.source === 'simulated' ? 'simulated ' : ''}readings were added to your timeline.` : 'No readings were reliable enough to keep. That’s common with movement or low light; your learning results are unaffected.'}{finished.reason ? ` ${finished.reason}` : ''}</p>}
+        {error && <p className="notice notice--warning presage-note" role="alert"><PracticeIcon name="alert" size={14} /><span>{error}</span><button type="button" className="icon-button" aria-label="Dismiss" onClick={dismiss}><PracticeIcon name="close" size={12} /></button></p>}
+        <div className="presage-actions">
+          <Button variant="secondary" onClick={() => begin()}><PracticeIcon name="camera" size={15} />Turn on camera</Button>
+          <Button variant="quiet" onClick={() => begin(CHECKIN_SECONDS)}><PracticeIcon name="clock" size={14} />{CHECKIN_SECONDS}-second check-in</Button>
+        </div>
+      </Collapsible>
     </section>;
   }
 
@@ -216,32 +222,31 @@ export function PresagePanel({ session, layout = 'rail' }: { session: PracticeSe
   const remaining = state.endsAt ? Math.max(0, Math.ceil((state.endsAt - now) / 1000)) : undefined;
   const collecting = simulated ? Boolean(status) : (status?.window.framesReceived ?? 0) > 0;
 
-  if (minimized) return <section className={className} aria-label="Presage camera insights">
-    <div className="presage-mini">
-      <span className="presage-pill presage-pill--inline" data-tone={stage.tone}><i aria-hidden="true" />{stage.label}</span>
-      {latest?.pulse && <span className="mono small"><PracticeIcon name="heart" size={12} />{Math.round(latest.pulse.value)} bpm{latest.pulse.valid ? '' : ' (prelim.)'}</span>}
-      {remaining !== undefined && <span className="mono small muted">{remaining}s</span>}
-      <button type="button" className="icon-button" aria-label="Show the Presage camera" onClick={() => setMinimized(false)}><PracticeIcon name="camera" size={14} /></button>
-      <button type="button" className="icon-button" aria-label="Stop Presage" disabled={state.phase === 'stopping'} onClick={() => void stop()}><PracticeIcon name="stop" size={12} /></button>
-    </div>
-  </section>;
-
   return <section className={className} aria-labelledby="presage-title">
     <header className="presage-head">
       <span className="presage-mark"><PracticeIcon name="camera" size={15} /></span>
       <div><strong id="presage-title">Presage</strong><small>{state.purpose ? PURPOSE_LABELS[state.purpose] : 'Camera insights'}{remaining !== undefined ? ` · ${remaining}s left` : ''}</small></div>
-      <button type="button" className="icon-button" aria-label="Minimise the Presage panel" onClick={() => setMinimized(true)}><PracticeIcon name="chevron" size={14} /></button>
+      {toggle}
     </header>
     <p className="sr-only" aria-live="polite">{stage.label}</p>
-    <CameraStage state={state} stream={stream} tracking={tracking} stage={stage} guidance={guidance} simulated={simulated} />
-    <Diagnostics state={state} simulated={simulated} />
-    <div className="presage-tiles">
-      <VitalTile icon="heart" label="Pulse" unit="bpm" sample={latest?.pulse} warmupMs={MONITORING_LIMITS.pulseWarmupMs} threshold={MONITORING_LIMITS.pulseMinConfidence} elapsedMs={status?.elapsedMs} collecting={collecting} />
-      <VitalTile icon="wave" label="Breathing" unit="/min" sample={latest?.breathing} warmupMs={MONITORING_LIMITS.breathingWarmupMs} threshold={MONITORING_LIMITS.breathingMinConfidence} elapsedMs={status?.elapsedMs} collecting={collecting} />
-    </div>
-    <footer className="presage-foot">
-      <span className="small muted">{simulated ? 'Synthetic readings for testing.' : 'Reflective readings, not a diagnosis.'} Video isn’t stored.</span>
-      <Button variant="secondary" size="sm" disabled={state.phase === 'stopping'} onClick={() => void stop()}><PracticeIcon name="stop" size={12} />{state.phase === 'stopping' ? 'Saving…' : 'Stop'}</Button>
-    </footer>
+    <Collapsible open={minimized}>
+      <div className="presage-mini">
+        <span className="presage-pill presage-pill--inline" data-tone={stage.tone}><i aria-hidden="true" /><span className="presage-pill-label">{stage.label}</span></span>
+        {latest?.pulse && <span className="mono small"><PracticeIcon name="heart" size={12} />{Math.round(latest.pulse.value)}<span className="presage-unit"> bpm{latest.pulse.valid ? '' : ' (prelim.)'}</span></span>}
+        <button type="button" className="icon-button" aria-label="Stop Presage" disabled={state.phase === 'stopping'} onClick={() => void stop()}><PracticeIcon name="stop" size={12} /></button>
+      </div>
+    </Collapsible>
+    <Collapsible open={!minimized} id="presage-body">
+      <CameraStage state={state} stream={stream} tracking={tracking} stage={stage} guidance={guidance} simulated={simulated} />
+      <Diagnostics state={state} simulated={simulated} />
+      <div className="presage-tiles">
+        <VitalTile icon="heart" label="Pulse" unit="bpm" sample={latest?.pulse} warmupMs={MONITORING_LIMITS.pulseWarmupMs} threshold={MONITORING_LIMITS.pulseMinConfidence} elapsedMs={status?.elapsedMs} collecting={collecting} />
+        <VitalTile icon="wave" label="Breathing" unit="/min" sample={latest?.breathing} warmupMs={MONITORING_LIMITS.breathingWarmupMs} threshold={MONITORING_LIMITS.breathingMinConfidence} elapsedMs={status?.elapsedMs} collecting={collecting} />
+      </div>
+      <footer className="presage-foot">
+        <span className="small muted">{simulated ? 'Synthetic readings for testing.' : 'Reflective readings, not a diagnosis.'} Video isn’t stored.</span>
+        <Button variant="secondary" size="sm" disabled={state.phase === 'stopping'} onClick={() => void stop()}><PracticeIcon name="stop" size={12} />{state.phase === 'stopping' ? 'Saving…' : 'Stop'}</Button>
+      </footer>
+    </Collapsible>
   </section>;
 }

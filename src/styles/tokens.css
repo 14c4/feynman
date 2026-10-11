@@ -64,6 +64,7 @@
   --s-10: 40px;
   --s-12: 48px;
   --s-16: 64px;
+  --s-20: 80px;
 
   /* Shape and depth */
   --r-sm: 6px;
@@ -82,8 +83,7 @@
   --t-slow: 360ms;
 
   /* Layout */
-  --sidebar-width: 264px;
-  --content-width: 1040px;
+  --content-width: 1120px;
   --reading-width: 720px;
 
   font-family: var(--font-sans);

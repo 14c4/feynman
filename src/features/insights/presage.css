@@ -5,7 +5,7 @@
   --presage-warn: #f0b84a;
   --presage-sdk: #7fb6e6;
   --presage-stage-bg: #0d1310;
-  display: grid; gap: var(--s-3); align-content: start; padding: var(--s-4); box-shadow: var(--shadow-xs);
+  display: grid; gap: 0; align-content: start; padding: var(--s-4); box-shadow: var(--shadow-xs);
 }
 .presage-panel p { margin: 0; }
 .presage-panel--rail { position: sticky; top: 76px; max-height: calc(100vh - 92px); overflow-y: auto; scrollbar-width: thin; }
@@ -57,22 +57,23 @@
 .presage-warmup > span { display: block; height: 100%; border-radius: 2px; background: var(--presage-sdk); transition: width 0.5s linear; }
 
 /* Off state */
-.presage-lede { line-height: 1.5; }
 .presage-actions { display: flex; flex-wrap: wrap; gap: var(--s-2); }
 .presage-panel--rail .presage-actions .button { flex: 1 1 auto; justify-content: center; }
-.presage-explain { justify-self: start; font-size: var(--text-xs); }
-.presage-explain svg { transition: transform var(--t-fast) var(--ease); }
-.presage-explain[aria-expanded='true'] svg { transform: rotate(90deg); }
-.presage-head .icon-button svg { transform: rotate(90deg); }
-.presage-consent { display: grid; gap: var(--s-2); padding: var(--s-3); border-radius: var(--r-md); background: var(--surface-sunken); line-height: 1.5; }
-.presage-consent li { padding-left: var(--s-3); position: relative; }
-.presage-consent li::before { content: ''; position: absolute; left: 0; top: 0.6em; width: 4px; height: 4px; border-radius: 50%; background: var(--accent); }
+.presage-toggle { flex: none; }
+.presage-toggle svg { transform: rotate(90deg); transition: transform var(--t-slow) var(--ease); }
+.presage-toggle[aria-expanded='false'] svg { transform: rotate(0deg); }
+
+/* Open/close: the body's height animates, so neighbouring boxes glide into their new places. */
+.presage-collapse { display: grid; grid-template-rows: 1fr; opacity: 1; transition: grid-template-rows var(--t-slow) var(--ease), opacity var(--t-base) var(--ease); }
+.presage-collapse[data-open='false'] { grid-template-rows: 0fr; opacity: 0; }
+.presage-collapse-inner { min-height: 0; overflow: hidden; display: grid; gap: var(--s-3); align-content: start; }
+.presage-collapse-inner > :first-child { margin-top: var(--s-3); }
+.presage-collapse[data-open='false'] > .presage-collapse-inner { visibility: hidden; transition: visibility 0s linear var(--t-slow); }
 .presage-note { display: flex; align-items: flex-start; gap: var(--s-2); font-size: var(--text-xs); }
 .presage-note .icon-button { width: 24px; height: 24px; margin-left: auto; }
 .presage-panel--off { gap: var(--s-2); }
 
-/* Minimized */
-.presage-panel.is-minimized { padding: var(--s-2) var(--s-3); }
+/* Minimized summary row (camera on) */
 .presage-mini { display: flex; align-items: center; gap: var(--s-2); }
 .presage-mini .presage-pill { flex: 1; min-width: 0; }
 .presage-mini .mono { display: inline-flex; align-items: center; gap: 4px; }
@@ -80,24 +81,25 @@
 /* Inline layout (results page): camera beside the readings on wide screens. */
 .presage-panel--inline { padding: var(--s-5); }
 .presage-panel--inline:not(.is-active) .presage-stage--off { display: none; }
-.presage-panel--inline.is-active:not(.is-minimized) {
+.presage-panel--inline.is-active #presage-body > .presage-collapse-inner {
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); column-gap: var(--s-5);
-  grid-template-rows: auto auto 1fr auto;
-  grid-template-areas: 'head head' 'stage tiles' 'stage .' 'foot foot';
+  grid-template-rows: auto 1fr auto;
+  grid-template-areas: 'stage tiles' 'stage .' 'foot foot';
 }
-.presage-panel--inline.is-active:not(.is-minimized) > .presage-head { grid-area: head; }
-.presage-panel--inline.is-active:not(.is-minimized) > .presage-stage { grid-area: stage; }
-.presage-panel--inline.is-active:not(.is-minimized) > .presage-tiles { grid-area: tiles; align-self: start; }
-.presage-panel--inline.is-active:not(.is-minimized) > .presage-foot { grid-area: foot; }
+.presage-panel--inline.is-active #presage-body .presage-stage { grid-area: stage; }
+.presage-panel--inline.is-active #presage-body .presage-tiles { grid-area: tiles; align-self: start; }
+.presage-panel--inline.is-active #presage-body .presage-foot { grid-area: foot; }
 
 @media (max-width: 760px) {
-  .presage-panel--inline.is-active:not(.is-minimized) { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-template-areas: 'head' 'stage' 'tiles' 'foot'; }
+  .presage-panel--inline.is-active #presage-body > .presage-collapse-inner { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-template-areas: 'stage' 'tiles' 'foot'; }
 }
-@media (max-width: 1180px) {
+@media (max-width: 900px) {
   .presage-panel--rail { position: static; max-height: none; overflow: visible; }
+  .presage-stage { aspect-ratio: 16 / 10; max-height: 240px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .presage-pill i { animation: none; }
+  .presage-collapse, .presage-toggle svg { transition: none; }
 }
 
 /* Measured pipeline status and preliminary readings */
@@ -112,3 +114,19 @@
 .presage-diag dd[data-tone='fair'] { color: #a8741a; }
 .presage-diag dd[data-tone='bad'] { color: #c2402f; }
 .presage-diag-error { margin: var(--s-2) 0 0; font-size: var(--text-xs); color: #c2402f; }
+
+/* Signal details sit behind a small toggle so the camera and readings stay the focus. */
+.presage-diag summary { cursor: pointer; font-size: var(--text-xs); color: var(--muted); list-style: none; padding: 2px 0; }
+.presage-diag summary::-webkit-details-marker { display: none; }
+.presage-diag summary::before { content: '›'; display: inline-block; width: 12px; transition: transform var(--t-fast) var(--ease); }
+.presage-diag details[open] summary::before { transform: rotate(90deg); }
+.presage-diag details[open] dl { margin-top: var(--s-2); }
+
+/* Phones: one-line panel header so the question stays near the top. */
+@media (max-width: 560px) {
+  .presage-head { gap: var(--s-2); }
+  .presage-head small { display: none; }
+  .presage-head strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .presage-head .badge { flex: none; padding: 0 6px; font-size: 9px; }
+  .presage-panel { padding: var(--s-3); }
+}

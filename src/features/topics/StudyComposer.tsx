@@ -3,22 +3,14 @@ import { MATERIAL_LIMITS, PRACTICE_LIMITS } from '../../../shared/types';
 import { Button } from '../../components/Button';
 import { PracticeIcon } from '../../components/practice/PracticeIcon';
 
-export interface SubjectSuggestion { title: string; label: string; notes: string }
-
 interface StudyComposerProps {
-  topic: string;
   description: string;
-  notes: string;
   files: File[];
   error?: string;
   busy: boolean;
-  suggestions: SubjectSuggestion[];
-  onTopic: (value: string) => void;
   onDescription: (value: string) => void;
-  onNotes: (value: string) => void;
   onFiles: (files: File[]) => void;
   onRemoveFile: (index: number) => void;
-  onSuggestion: (suggestion: SubjectSuggestion) => void;
   onSubmit: (event: FormEvent) => void;
 }
 
@@ -38,7 +30,7 @@ function Thumb({ file }: { file: File }) {
   return url ? <img className="file-thumb" src={url} alt="" /> : <span className="file-kind">IMG</span>;
 }
 
-export function StudyComposer({ topic, description, notes, files, error, busy, suggestions, onTopic, onDescription, onNotes, onFiles, onRemoveFile, onSuggestion, onSubmit }: StudyComposerProps) {
+export function StudyComposer({ description, files, error, busy, onDescription, onFiles, onRemoveFile, onSubmit }: StudyComposerProps) {
   const [dragging, setDragging] = useState(false);
   const depth = useRef(0);
   const full = files.length >= MATERIAL_LIMITS.files;
@@ -48,13 +40,13 @@ export function StudyComposer({ topic, description, notes, files, error, busy, s
     <h2 id="composer-heading" className="sr-only">Start a study session</h2>
     <div className="composer-body">
       <div className="field">
-        <span className="field-label" id="materials-label">Upload what you’re studying</span>
+        <span className="field-label field-label--lg" id="materials-label">Upload what you’re studying</span>
         <label htmlFor="files" className={`dropzone dropzone--hero ${dragging ? 'is-dragging' : ''} ${dropDisabled ? 'is-disabled' : ''} ${files.length ? 'has-files' : ''}`}
           onDragEnter={(event) => { event.preventDefault(); if (dropDisabled) return; depth.current += 1; setDragging(true); }}
           onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = dropDisabled ? 'none' : 'copy'; }}
           onDragLeave={() => { depth.current = Math.max(0, depth.current - 1); if (!depth.current) setDragging(false); }}
           onDrop={(event) => { event.preventDefault(); depth.current = 0; setDragging(false); if (!dropDisabled) onFiles(Array.from(event.dataTransfer.files)); }}>
-          <span className="dropzone-icon"><PracticeIcon name="upload" size={22} /></span>
+          <span className="dropzone-icon"><PracticeIcon name="upload" size={26} /></span>
           <span className="dropzone-copy"><strong>{full ? 'File limit reached' : dragging ? 'Drop to add' : files.length ? 'Add another file' : 'Drop photos, notes or PDFs here, or browse'}</strong>
             <span>Photos of notes or textbook pages, screenshots, PDFs, TXT or Markdown. Up to {MATERIAL_LIMITS.files} files, {MATERIAL_LIMITS.fileBytes / 1024 / 1024} MB each.</span></span>
           <input id="files" className="sr-only" type="file" multiple disabled={dropDisabled} aria-labelledby="materials-label" aria-describedby="files-hint"
@@ -69,25 +61,16 @@ export function StudyComposer({ topic, description, notes, files, error, busy, s
       </div>
 
       <div className="field">
-        <label className="field-label" htmlFor="description">Anything to add? <span className="optional">optional</span></label>
-        <textarea id="description" className="textarea composer-detail" rows={2} maxLength={PRACTICE_LIMITS.description} value={description} disabled={busy} onChange={(event) => onDescription(event.target.value)}
+        <label className="field-label field-label--lg" htmlFor="description">Anything to add? <span className="optional">optional</span></label>
+        <textarea id="description" className="textarea composer-detail" rows={3} maxLength={PRACTICE_LIMITS.description} value={description} disabled={busy} onChange={(event) => onDescription(event.target.value)}
           placeholder={files.length ? 'e.g. Focus on chapter 3, or what I found confusing' : 'Or just describe it: how light energy becomes chemical energy in a leaf'} aria-describedby="description-hint" />
         <p id="description-hint" className="field-hint">{files.length ? 'Your upload is enough on its own. Add a line only if you want to steer the questions.' : 'Without a file, a specific idea you’ve already studied works best.'}</p>
       </div>
-
-      <details className="composer-notes" open={notes || topic ? true : undefined}>
-        <summary><PracticeIcon name="chevron" size={14} />Title and notes <span className="optional">optional</span></summary>
-        <div className="field"><label className="field-label" htmlFor="topic">Title</label>
-          <input id="topic" className="input" maxLength={PRACTICE_LIMITS.topic} value={topic} disabled={busy} onChange={(event) => onTopic(event.target.value)} placeholder="e.g. Photosynthesis" autoComplete="off" /></div>
-        <div className="field"><label className="field-label" htmlFor="notes">Notes to help shape your questions</label>
-          <textarea id="notes" className="textarea" rows={4} maxLength={PRACTICE_LIMITS.notes} value={notes} disabled={busy} onChange={(event) => onNotes(event.target.value)} placeholder="A few key points from class…" /></div>
-      </details>
     </div>
 
     {error && <p className="form-error composer-error" role="alert"><PracticeIcon name="alert" size={16} />{error}</p>}
 
     <div className="composer-foot">
-      <div className="composer-suggestions"><span>No material? Try</span>{suggestions.map((suggestion) => <button type="button" className="chip" key={suggestion.title} disabled={busy} onClick={() => onSuggestion(suggestion)}>{suggestion.title}</button>)}</div>
       <Button type="submit" size="lg" disabled={busy}>{busy ? <><span className="spinner" aria-hidden="true" />{files.some(isImage) ? 'Reading your upload…' : files.length ? 'Uploading…' : 'Starting…'}</> : <>Start session<PracticeIcon name="arrow" size={18} /></>}</Button>
     </div>
   </form>;

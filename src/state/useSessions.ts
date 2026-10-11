@@ -3,7 +3,6 @@ import type { SessionState } from './sessionReducer';
 import type { AssessmentAnswer, CreatePracticeInput, FrameEncoding, IntegrationHealth, MonitoringPurpose, MonitoringStatus, NervousnessValue, VoiceCredentials } from '../../shared/types';
 
 export interface SessionContextValue extends SessionState {
-  storageError?: string;
   providerMode?: 'real' | 'mock';
   integration?: IntegrationHealth;
   draftStatus: Record<string, 'local' | 'saving' | 'saved'>;
@@ -14,8 +13,6 @@ export interface SessionContextValue extends SessionState {
   prepareSession: (id: string, clarification?: string, suggestion?: 'accept' | 'decline') => Promise<void>;
   updateDraft: (id: string, attemptId: string, answer: AssessmentAnswer, questionIndex?: number) => void;
   submitAssessment: (id: string, attemptId: string) => Promise<void>;
-  saveAndExit: (id: string) => Promise<void>;
-  resumeSession: (id: string) => Promise<void>;
   startRecheck: (id: string) => Promise<void>;
   /** Leaves an unsubmitted follow-up check to keep teaching Alex; answers are kept. */
   returnToTeaching: (id: string) => Promise<void>;
@@ -27,8 +24,6 @@ export interface SessionContextValue extends SessionState {
   generateReview: (id: string, regenerate?: boolean) => Promise<void>;
   registerConversation: (id: string, conversationId: string) => Promise<void>;
   finalizeConversation: (id: string, conversationId: string) => Promise<void>;
-  /** Deletes sessions from this browser and, when reachable, from the server. */
-  removeSessions: (ids: string[]) => Promise<void>;
   startTextConversation: (id: string) => Promise<void>;
   /** Omit `text` to retry Alex's reply to the last saved message. */
   sendTextMessage: (id: string, conversationId: string, text?: string) => Promise<void>;

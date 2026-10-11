@@ -8,7 +8,6 @@ import { ConversationList } from '../study/ConversationStatus';
 import type { AssessmentGrade, QuestionGrade } from '../../../shared/types';
 import { CONFIDENCE_LABELS } from '../../../shared/insights';
 import { ReadinessInsights } from '../insights/ReadinessInsights';
-import { PresagePanel } from '../insights/PresagePanel';
 import { ReviewSheetPanel } from './ReviewSheet';
 import '../study/study.css';
 import './feedback.css';
@@ -31,7 +30,7 @@ function ScoreBar({ grade, label }: { grade?: AssessmentGrade; label: string }) 
 }
 
 export function ResultsPage() {
-  const { sessionId = '' } = useParams(); const { sessions, busy, errors, loadSession, finishSession, setNervousness } = useSessions(); const navigate = useNavigate(); const session = sessions[sessionId]; const loadStarted = useRef(false);
+  const { sessionId = '' } = useParams(); const { sessions, busy, errors, loadSession, finishSession } = useSessions(); const navigate = useNavigate(); const session = sessions[sessionId]; const loadStarted = useRef(false);
   useEffect(() => { if (!session && !loadStarted.current) { loadStarted.current = true; void loadSession(sessionId).catch(() => { loadStarted.current = false; }); } }, [session, sessionId, loadSession]);
   if (!session) return <EmptyState loading={busy[sessionId]} title={busy[sessionId] ? 'Opening your reflection…' : 'Reflection unavailable'} description={busy[sessionId] ? 'Fetching your results.' : errors[sessionId] ?? 'We could not load this saved session.'} />;
   if (session.stage !== 'results') return <Navigate to={`/study/${sessionId}`} replace />;
@@ -54,7 +53,10 @@ export function ResultsPage() {
   return <div className="results">
     <header className="results-head enter">
       <span className="eyebrow"><PracticeIcon name="leaf" size={14} />{session.title}</span>
-      <h1 tabIndex={-1}>Here’s what changed.</h1>
+      <div className="results-title">
+        <h1 tabIndex={-1}>Here’s what changed.</h1>
+        <Button disabled={busy[sessionId]} onClick={async () => { try { await finishSession(sessionId); await navigate('/'); } catch { /* state exposes operation error */ } }}>Finish session<PracticeIcon name="check" size={16} /></Button>
+      </div>
     </header>
 
     {mock && <div className="notice notice--warning" role="status"><PracticeIcon name="info" size={16} /><p>DEV MOCK: these are deterministic test grades from the development fixture, not Gemini evaluation. {conversations.length ? 'Alex’s text replies were scripted test messages.' : 'Teaching was skipped with a test-only bypass; no conversation took place.'}</p></div>}
@@ -66,8 +68,7 @@ export function ResultsPage() {
       {comparison && <p className="compare-note">{comparison} The follow-up used different questions on the same three concepts.</p>}
     </section>
 
-    <ReadinessInsights session={session} />
-
+    <ReadinessInsights session={session} beforeConcepts={
     <div className="results-split">
       <section className="takeaway card" aria-labelledby="stronger-heading">
         <h3 id="stronger-heading"><span className="takeaway-icon"><PracticeIcon name="check" size={14} strokeWidth={2} /></span>Understood better or solid</h3>
@@ -78,13 +79,7 @@ export function ResultsPage() {
         {weaker.length ? <ul>{weaker.map((item) => <li key={item.concept.id}>{item.concept.title}</li>)}</ul> : <p className="muted small">Every follow-up answer received full marks.</p>}
       </section>
     </div>
-
-    <section className="next-step card" aria-labelledby="next-heading">
-      <div><span className="eyebrow">What to do next</span>
-        <h3 id="next-heading">{weaker.length ? `Explain ${weakTitles.length === 1 ? weakTitles[0] : 'these ideas'} again in a fresh session` : 'Try teaching Alex a new topic'}</h3>
-        <p className="muted small">{weaker.length ? 'Read the feedback above, revisit your notes on the gaps, then teach it again with new questions.' : 'Explaining something new is the best way to keep the habit going.'}</p></div>
-      {weaker.length ? <Button variant="secondary" onClick={practiseAgain}>Practice again<PracticeIcon name="arrow" size={16} /></Button> : <Link className="button button--secondary" to="/">New session<PracticeIcon name="arrow" size={16} /></Link>}
-    </section>
+    } />
 
     <div className="results-details">
       <details className="disclosure"><summary>{mock ? 'DEV MOCK test feedback · question by question' : 'Question-by-question feedback'}<span className="summary-meta">{session.attempts.reduce((total, attempt) => total + attempt.questions.length, 0)} questions</span><PracticeIcon name="chevron" size={14} /></summary>
@@ -101,19 +96,13 @@ export function ResultsPage() {
 
     <ReviewSheetPanel key={session.id} session={session} />
 
-    <section className="reflection card" aria-labelledby="reflection-heading">
-      <div><span className="eyebrow">Optional self-report · not a diagnosis</span><h3 id="reflection-heading">How nervous do you feel now?</h3>
-        <p className="muted small">Before: {session.nervousnessBefore === undefined ? 'not recorded' : `${session.nervousnessBefore}/5`}{session.nervousnessAfter !== undefined && <> · After: {session.nervousnessAfter}/5</>}</p></div>
-      {session.nervousnessAfter === undefined && session.lifecycle === 'active' ? <div><div className="rating-scale">{([1, 2, 3, 4, 5] as const).map((value) => <button type="button" key={value} disabled={busy[sessionId]} aria-label={`Nervousness ${value} out of 5`} onClick={() => void setNervousness(sessionId, 'after', value).catch(() => undefined)}>{value}</button>)}</div><div className="rating-ends"><span>Not at all</span><span>Very</span></div></div>
-        : session.nervousnessAfter === undefined && <p className="muted small">After: not recorded</p>}
-    </section>
-
-    <PresagePanel session={session} layout="inline" />
-
     {(errors[sessionId] || session.operationError) && <p className="notice notice--danger" role="alert"><PracticeIcon name="alert" size={16} />{errors[sessionId] || session.operationError}</p>}
-    <div className="results-actions">
-      <Link to="/" className="button button--quiet">Start a new session</Link>
-      <Button disabled={busy[sessionId]} onClick={async () => { try { await finishSession(sessionId); await navigate('/'); } catch { /* state exposes operation error */ } }}>Finish session<PracticeIcon name="check" size={16} /></Button>
-    </div>
+
+    <section className="next-step card" aria-labelledby="next-heading">
+      <div><span className="eyebrow">What to do next</span>
+        <h3 id="next-heading">{weaker.length ? `Explain ${weakTitles.length === 1 ? weakTitles[0] : 'these ideas'} again in a fresh session` : 'Try teaching Alex a new topic'}</h3>
+        <p className="muted small">{weaker.length ? 'Read the feedback above, revisit your notes on the gaps, then teach it again with new questions.' : 'Explaining something new is the best way to keep the habit going.'}</p></div>
+      {weaker.length ? <Button variant="secondary" onClick={practiseAgain}>Practice again<PracticeIcon name="arrow" size={16} /></Button> : <Link className="button button--secondary" to="/">New session<PracticeIcon name="arrow" size={16} /></Link>}
+    </section>
   </div>;
 }

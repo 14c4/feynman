@@ -38,11 +38,3 @@ test('missing-server errors retain browser drafts and clear their status on retr
   const retry = sessionReducer(missing, { type: 'error', sessionId: 'one', message: '' });
   assert.equal(retry.errorStatuses.one, undefined);
 });
-
-test('removing sessions drops them with their busy and error state', () => {
-  const session = { id: 'a' } as unknown as PracticeSession;
-  const state = { ...initialSessionState, sessions: { a: session, b: { ...session, id: 'b' } }, busy: { a: true }, errors: { a: 'x' }, errorStatuses: { a: 404 } };
-  const next = sessionReducer(state, { type: 'remove', sessionIds: ['a'] });
-  assert.deepEqual(Object.keys(next.sessions), ['b']);
-  assert.deepEqual([next.busy, next.errors, next.errorStatuses], [{}, {}, {}]);
-});

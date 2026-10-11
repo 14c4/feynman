@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { PracticeSession, QuestionGrade, TimelinePhase } from '../../../shared/types';
 import {
   buildTimeline, calibrationSummary, CONFIDENCE_LABELS, conceptJourneys, PHASE_LABELS, phaseAt, phaseReadings, readingsNear,
-  type AnswerMoment, type ConceptJourney, type SessionTimeline, type TimelineItem,
+  type AnswerMoment, type ConceptJourney, type PhaseSpan, type SessionTimeline, type TimelineItem,
 } from '../../../shared/insights';
 import { PracticeIcon } from '../../components/practice/PracticeIcon';
 import { PURPOSE_LABELS } from './monitoringContext';
@@ -40,27 +40,27 @@ function CalibrationTag({ moment }: { moment?: AnswerMoment }) {
 /* ---------- time scale ---------- */
 
 /**
- * Piecewise time scale: each learning phase gets a share of the width proportional to the square
- * root of its duration (minimum 8%), so a long pause never squeezes a 40-second assessment into a
- * sliver. Within a phase, time stays linear, and every mark is placed by its real timestamp.
+ * Piecewise time scale over the given phases. Every phase gets a readable share of the width (longer
+ * phases get somewhat more, at most ~1.7× a short one), so a long phase never squeezes the others into
+ * slivers. Within a phase, time is linear and every mark is placed by its real timestamp; anything
+ * outside the shown phases is pinned to the nearest edge.
  */
-function makeScale(timeline: SessionTimeline, x0: number, x1: number) {
-  const spans = timeline.phases.length ? timeline.phases : [{ phase: 'preparation' as TimelinePhase, start: timeline.start, end: timeline.end }];
-  const durations = spans.map((span, index) => Math.max(1, (index === spans.length - 1 ? Math.max(span.end, timeline.end) : span.end) - span.start));
-  const weights = durations.map((duration) => Math.sqrt(duration));
+function makeScale(spans: PhaseSpan[], x0: number, x1: number) {
+  const durations = spans.map((span) => Math.max(1, span.end - span.start));
+  const roots = durations.map((duration) => Math.sqrt(duration)); const maxRoot = Math.max(...roots);
+  const weights = roots.map((root) => 0.6 + 0.4 * (root / maxRoot));
   const sum = weights.reduce((total, weight) => total + weight, 0);
-  let shares = weights.map((weight) => Math.max(0.08, weight / sum));
-  const norm = shares.reduce((total, share) => total + share, 0); shares = shares.map((share) => share / norm);
+  const shares = weights.map((weight) => weight / sum);
   const offsets = shares.map((_, index) => shares.slice(0, index).reduce((total, share) => total + share, 0));
   const width = x1 - x0;
   const x = (t: number) => {
+    if (t < spans[0]!.start) return x0;
     let index = spans.findIndex((span, i) => t < span.start + durations[i]!);
     if (index < 0) index = spans.length - 1;
-    if (t < spans[0]!.start) return x0;
     const fraction = Math.min(1, Math.max(0, (t - spans[index]!.start) / durations[index]!));
     return x0 + (offsets[index]! + shares[index]! * fraction) * width;
   };
-  return { x, bands: spans.map((span, index) => ({ phase: span.phase, start: span.start, x: x0 + offsets[index]! * width, w: shares[index]! * width })) };
+  return { x, bands: spans.map((span, index) => ({ phase: span.phase, start: span.start, duration: durations[index]!, x: x0 + offsets[index]! * width, w: shares[index]! * width })) };
 }
 
 /* ---------- selection & details ---------- */
@@ -113,13 +113,32 @@ function Details({ item, session, timeline, onSelect }: { item: Selectable; sess
 
 /* ---------- chart ---------- */
 
-const LANE = { phases: 0, knowledge: 34, teach: 132, pulse: 182, breathing: 262, axis: 330 } as const;
-const CONF_Y: Record<string, number> = { high: LANE.knowledge + 14, medium: LANE.knowledge + 40, low: LANE.knowledge + 66, none: LANE.knowledge + 84 };
-const PAD_L = 92; const PAD_R = 16;
+/*
+ * One row per concept, so each concept reads left to right: first check, what you said while teaching
+ * Alex, then the follow-up. Below, a lane is drawn only when it has something to show: the conversation,
+ * and reliable pulse and breathing readings. What's missing is said in words under the chart instead.
+ */
+const HEAD = 56;
+const ROW = 70;
+const LABEL_W = 176;
+const PAD_L = LABEL_W + 44;
+const PAD_R = 40;
+const CONV_LANE = 52;
+const BAR_H = 14;
+const PULSE_LANE = 84;
+const BREATH_LANE = 72;
+const PLOT_PAD = 16;
 
-/** Fits a phase name into its band: full name, first word, or nothing (the tooltip keeps it). */
-function bandLabel(label: string, width: number) {
-  const fits = (text: string) => text.length * 6.8 + 14 <= width;
+/** Short phase names for the band headers; the full name stays in the tooltip. */
+const BAND_NAMES: Record<TimelinePhase, string> = { preparation: 'Getting ready', baseline: 'First check', teaching: 'Teaching', recheck: 'Follow-up', results: 'Done' };
+
+type AnswerItem = Extract<TimelineItem, { type: 'answer' }>;
+
+const lasted = (ms: number) => { const s = Math.round(ms / 1000); if (s < 60) return `${s} s`; const m = Math.floor(s / 60); return s % 60 ? `${m} min ${s % 60} s` : `${m} min`; };
+
+/** Fits a label into a band: full text, first word, or nothing (the tooltip keeps it). */
+function bandLabel(label: string, width: number, charW = 7.2) {
+  const fits = (text: string) => text.length * charW + 16 <= width;
   if (fits(label)) return label;
   const first = label.split(' ')[0]!;
   return fits(first) ? first : '';
@@ -131,90 +150,166 @@ function linePath(points: { x: number; y: number; t: number }[], gapMs = 6000) {
   return d;
 }
 
-function TimelineChart({ timeline, selected, onSelect, width }: { timeline: SessionTimeline; selected?: string; onSelect: (id: string) => void; width: number }) {
-  const { x, bands } = makeScale(timeline, PAD_L, width - PAD_R);
+/** Wraps a concept title onto at most two lines that fit the label column. */
+function wrapTitle(title: string, max = 22): string[] {
+  const lines: string[] = []; let line = '';
+  for (const word of title.split(/\s+/)) {
+    if (!line) line = word;
+    else if (`${line} ${word}`.length <= max) line = `${line} ${word}`;
+    else { lines.push(line); line = word; }
+  }
+  if (line) lines.push(line);
+  if (lines.length <= 2) return lines.map((text) => text.length > max ? `${text.slice(0, max - 1)}…` : text);
+  return [lines[0]!, `${lines.slice(1).join(' ').slice(0, max - 1).trimEnd()}…`];
+}
+
+/** Which phases the chart spans: setup only when readings were taken then, and never the results screen. */
+function chartSpans(timeline: SessionTimeline): PhaseSpan[] {
+  const firstCheck = timeline.phases.find((span) => span.phase === 'baseline')?.start;
+  const readings = [...timeline.samples.pulse, ...timeline.samples.breathing].filter((sample) => sample.valid);
+  const setupReadings = firstCheck !== undefined && readings.some((sample) => sample.t < firstCheck);
+  const spans = timeline.phases.filter((span) => span.phase !== 'results' && (span.phase !== 'preparation' || setupReadings));
+  if (spans.length) return spans;
+  return timeline.phases.length ? timeline.phases : [{ phase: 'preparation', start: timeline.start, end: timeline.end }];
+}
+
+function TimelineChart({ timeline, journeys, selected, onSelect, width }: { timeline: SessionTimeline; journeys: ConceptJourney[]; selected?: string; onSelect: (id: string) => void; width: number }) {
+  const { x, bands } = makeScale(chartSpans(timeline), PAD_L, width - PAD_R);
+  const answerItem = new Map<AnswerMoment, AnswerItem>();
+  for (const item of timeline.items) if (item.type === 'answer') answerItem.set(item.answer, item);
+  const messages = timeline.items.filter((item): item is Extract<TimelineItem, { type: 'message' }> => item.type === 'message');
+  const conversations = timeline.items.filter((item): item is Extract<TimelineItem, { type: 'conversation' }> => item.type === 'conversation' && item.edge === 'started');
   const selectedItem = timeline.items.find((item) => item.id === selected);
-  const hasCamera = timeline.windows.length > 0;
-  const plot = (metric: 'pulse' | 'breathing', top: number, height: number) => {
-    const valid = timeline.samples[metric].filter((sample) => sample.valid);
-    const invalid = timeline.samples[metric].filter((sample) => !sample.valid);
-    if (!valid.length) return { valid, invalid, path: '', ticks: [] as { y: number; label: string }[], y: () => top + height / 2 };
+  const pulseValid = timeline.samples.pulse.filter((sample) => sample.valid);
+  const breathValid = timeline.samples.breathing.filter((sample) => sample.valid);
+
+  // Vertical layout: concept rows, then only the lanes that have data.
+  const rowY = (index: number) => HEAD + index * ROW + ROW / 2;
+  let cursor = HEAD + journeys.length * ROW;
+  const convTop = conversations.length ? cursor : undefined; if (convTop !== undefined) cursor += CONV_LANE;
+  const signalTop = cursor;
+  const pulseTop = pulseValid.length ? cursor : undefined; if (pulseTop !== undefined) cursor += PULSE_LANE;
+  const breathTop = breathValid.length ? cursor : undefined; if (breathTop !== undefined) cursor += BREATH_LANE;
+  const bottom = cursor;
+  const height = bottom + 6;
+  const plotX1 = width - PAD_R;
+
+  const key = (event: KeyboardEvent, id: string) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(id); } };
+  const interactive = (id: string) => ({ role: 'button' as const, tabIndex: 0, onClick: () => onSelect(id), onKeyDown: (event: KeyboardEvent) => key(event, id), onMouseEnter: () => onSelect(id) });
+
+  /** One answer, placed on its concept row: colour = grade, the label above = stated confidence, below = score. */
+  const mark = (item: AnswerItem, cy: number) => {
+    const moment = item.answer; const cx = x(item.at); const tone = scoreTone(moment.grade, moment.skipped);
+    return <g key={item.id} className={`tl-answer-mark tl-answer-mark--${tone} ${moment.kind === 'recheck' ? 'is-recheck' : ''} ${selected === item.id ? 'is-selected' : ''}`}
+      aria-label={itemLabel(item)} {...interactive(item.id)}>
+      {moment.calibration.mismatch && <circle className="tl-halo" cx={cx} cy={cy} r={15} />}
+      {moment.kind === 'recheck' ? <rect x={cx - 9} y={cy - 9} width={18} height={18} rx={4} /> : <circle cx={cx} cy={cy} r={9} />}
+      {moment.confidence && !moment.skipped && <text className="tl-mark-conf" x={cx} y={cy - 16} textAnchor="middle">{CONFIDENCE_LABELS[moment.confidence]}</text>}
+      <text className="tl-mark-score" x={cx} y={cy + 26} textAnchor="middle">{moment.skipped ? 'skipped' : moment.grade ? `${moment.grade.score}/${moment.grade.maxScore}` : ''}</text>
+    </g>;
+  };
+
+  /** Lane label in the left column, vertically centred on the lane. */
+  const laneLabel = (top: number, laneH: number, label: string, sub?: string) => <>
+    <text className="tl-lane-label" x={0} y={top + laneH / 2 + (sub ? -3 : 4)}>{label}</text>
+    {sub && <text className="tl-lane-sub" x={0} y={top + laneH / 2 + 13}>{sub}</text>}
+  </>;
+
+  /** A reliable-readings line fitted inside its lane, with its top and bottom values as gridlines. */
+  const signal = (metric: 'pulse' | 'breathing', valid: typeof pulseValid, laneTop: number, laneH: number) => {
+    const top = laneTop + PLOT_PAD; const bandH = laneH - PLOT_PAD * 2;
     const values = valid.map((sample) => sample.value);
     let low = Math.floor(Math.min(...values)); let high = Math.ceil(Math.max(...values));
     const span = metric === 'pulse' ? 10 : 4; if (high - low < span) { const mid = (high + low) / 2; low = Math.floor(mid - span / 2); high = Math.ceil(mid + span / 2); }
-    const y = (value: number) => top + height - ((value - low) / (high - low)) * height;
-    return { valid, invalid, path: linePath(valid.map((sample) => ({ x: x(sample.t), y: y(sample.value), t: sample.t }))), ticks: [{ y: y(high), label: String(high) }, { y: y(low), label: String(low) }], y };
+    const y = (value: number) => top + bandH - ((value - low) / (high - low)) * bandH;
+    return <g className="tl-signal">
+      <line className="tl-rowline" x1={0} x2={width} y1={laneTop} y2={laneTop} />
+      {laneLabel(laneTop, laneH, metric === 'pulse' ? 'Pulse' : 'Breathing', metric === 'pulse' ? 'beats per min' : 'breaths per min')}
+      {[high, low].map((value) => <g key={`${metric}${value}`}>
+        <line className="tl-grid" x1={PAD_L} x2={plotX1} y1={y(value)} y2={y(value)} />
+        <text className="tl-tick" x={PAD_L - 8} y={y(value) + 4} textAnchor="end">{value}</text>
+      </g>)}
+      <path className={metric === 'pulse' ? 'tl-pulse' : 'tl-breath'} d={linePath(valid.map((sample) => ({ x: x(sample.t), y: y(sample.value), t: sample.t })))} />
+    </g>;
   };
-  const pulse = plot('pulse', LANE.pulse + 8, 52); const breathing = plot('breathing', LANE.breathing + 8, 44);
-  const key = (event: KeyboardEvent, id: string) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(id); } };
-  const conversations = timeline.items.filter((item): item is Extract<TimelineItem, { type: 'conversation' }> => item.type === 'conversation' && item.edge === 'started');
-  const axisTicks = bands.map((band) => ({ x: band.x, label: elapsed(band.start - timeline.start) }));
 
-  return <svg className="tl-chart" width={width} height={LANE.axis + 22} role="group" aria-label="Session timeline chart">
-    {/* phase bands */}
+  return <svg className="tl-chart" width={width} height={height} role="group" aria-label="Session timeline chart">
+    {/* phase bands run through every lane; each header shows how long the phase lasted */}
     {bands.map((band) => <g key={band.phase} className={`tl-band tl-band--${band.phase}`}>
-      <rect x={band.x} y={LANE.knowledge - 6} width={band.w} height={LANE.axis - LANE.knowledge + 6} />
-      <line x1={band.x} x2={band.x} y1={LANE.phases + 4} y2={LANE.axis} />
-      <text x={band.x + 8} y={LANE.phases + 18} className="tl-band-label">{bandLabel(PHASE_LABELS[band.phase], band.w)}<title>{PHASE_LABELS[band.phase]}</title></text>
+      <rect x={band.x} y={0} width={band.w} height={bottom} />
+      <line x1={band.x} x2={band.x} y1={0} y2={bottom} />
+      <text x={band.x + 10} y={24} className="tl-band-label">{bandLabel(BAND_NAMES[band.phase], band.w)}<title>{PHASE_LABELS[band.phase]}</title></text>
+      <text x={band.x + 10} y={41} className="tl-band-sub">{bandLabel(lasted(band.duration), band.w, 6.2)}</text>
     </g>)}
 
-    {/* lane labels */}
-    <g className="tl-lane-labels">
-      <text x={8} y={CONF_Y.high! + 4}>Confident</text><text x={8} y={CONF_Y.medium! + 4}>Somewhat</text><text x={8} y={CONF_Y.low! + 4}>Guessing</text><text x={8} y={CONF_Y.none! + 4} className="is-faint">No rating</text>
-      <text x={8} y={LANE.teach + 18}>With Alex</text>
-      <text x={8} y={LANE.pulse + 22}>Pulse</text><text x={8} y={LANE.pulse + 36} className="is-faint">bpm</text>
-      <text x={8} y={LANE.breathing + 22}>Breathing</text><text x={8} y={LANE.breathing + 36} className="is-faint">per min</text>
-    </g>
-    {[CONF_Y.high, CONF_Y.medium, CONF_Y.low].map((y) => <line key={y} className="tl-grid" x1={PAD_L} x2={width - PAD_R} y1={y} y2={y} />)}
+    {/* soft bands where the camera was on, behind the reading lanes */}
+    {bottom > signalTop && timeline.windows.map((window) => { const start = Date.parse(window.startedAt); const end = window.endedAt ? Date.parse(window.endedAt) : timeline.end; return <rect key={window.id} className={`tl-window ${window.source === 'simulated' ? 'tl-window--sim' : ''}`} x={x(start)} y={signalTop} width={Math.max(3, x(end) - x(start))} height={bottom - signalTop} />; })}
 
-    {/* camera windows */}
-    {timeline.windows.map((window) => { const start = Date.parse(window.startedAt); const end = window.endedAt ? Date.parse(window.endedAt) : timeline.end; return <rect key={window.id} className={`tl-window ${window.source === 'simulated' ? 'tl-window--sim' : ''}`} x={x(start)} y={LANE.pulse} width={Math.max(2, x(end) - x(start))} height={LANE.axis - LANE.pulse - 8} />; })}
-    {!hasCamera && <text className="tl-empty" x={PAD_L + 8} y={LANE.pulse + 48}>Camera insights were off for this session. Your learning timeline is complete without them.</text>}
-    {hasCamera && !pulse.valid.length && <text className="tl-empty" x={PAD_L + 8} y={LANE.pulse + 36}>No pulse readings were reliable enough to plot.</text>}
-    {hasCamera && !breathing.valid.length && <text className="tl-empty" x={PAD_L + 8} y={LANE.breathing + 32}>No breathing readings were reliable enough to plot.</text>}
-    {[pulse, breathing].map((series, index) => <g key={index} className={`tl-series tl-series--${index ? 'breathing' : 'pulse'}`}>
-      {series.ticks.map((tick) => <text key={tick.label + tick.y} className="tl-tick" x={PAD_L - 6} y={tick.y + 3} textAnchor="end">{tick.label}</text>)}
-      {series.invalid.map((sample) => <circle key={`i${sample.t}`} className="tl-invalid" cx={x(sample.t)} cy={(index ? LANE.breathing : LANE.pulse) + (index ? 60 : 66)} r={1.6} />)}
-      {series.path && <path d={series.path} />}
-    </g>)}
+    {/* selection guide, behind the marks so it never covers their labels */}
+    {selectedItem && <line className="tl-guide" x1={x(selectedItem.at)} x2={x(selectedItem.at)} y1={HEAD - 6} y2={bottom} />}
 
-    {/* teaching conversations and Alex's questions */}
-    {conversations.map((item) => { const end = timeline.items.find((other) => other.type === 'conversation' && other.conversationId === item.conversationId && other.edge === 'ended')?.at ?? timeline.end; return <g key={item.id} className="tl-convo" role="button" tabIndex={0} aria-label={itemLabel(item)} onClick={() => onSelect(item.id)} onKeyDown={(event) => key(event, item.id)}>
-      <rect x={x(item.at)} y={LANE.teach + 6} width={Math.max(6, x(end) - x(item.at))} height={18} rx={9} className={selected === item.id ? 'is-selected' : ''} />
-    </g>; })}
-    {timeline.items.filter((item): item is Extract<TimelineItem, { type: 'message' }> => item.type === 'message').map((item) => item.role === 'student' && item.question
-      ? <g key={item.id} className={`tl-ask ${selected === item.id ? 'is-selected' : ''}`} role="button" tabIndex={0} aria-label={`${itemLabel(item)}: ${clip(item.text, 80)}`} onClick={() => onSelect(item.id)} onKeyDown={(event) => key(event, item.id)} onMouseEnter={() => onSelect(item.id)}>
-        <rect x={x(item.at) - 5} y={LANE.teach + 10} width={10} height={10} transform={`rotate(45 ${x(item.at)} ${LANE.teach + 15})`} />
-      </g>
-      : item.role === 'learner' ? <line key={item.id} className="tl-turn" x1={x(item.at)} x2={x(item.at)} y1={LANE.teach + 9} y2={LANE.teach + 21} /> : null)}
-
-    {/* assessment edges and self-reports */}
-    {timeline.items.filter((item) => item.type === 'assessment' && item.edge !== 'graded').map((item) => <line key={item.id} className="tl-edge" x1={x(item.at)} x2={x(item.at)} y1={LANE.knowledge} y2={LANE.knowledge + 92} />)}
-    {timeline.items.filter((item): item is Extract<TimelineItem, { type: 'nervousness' }> => item.type === 'nervousness').map((item) => <g key={item.id} className={`tl-self ${selected === item.id ? 'is-selected' : ''}`} role="button" tabIndex={0} aria-label={itemLabel(item)} onClick={() => onSelect(item.id)} onKeyDown={(event) => key(event, item.id)} onMouseEnter={() => onSelect(item.id)}>
-      <circle cx={x(item.at)} cy={LANE.teach + 15} r={8} /><text x={x(item.at)} y={LANE.teach + 19} textAnchor="middle">{item.value}</text>
-    </g>)}
-    {timeline.items.filter((item): item is Extract<TimelineItem, { type: 'quality' }> => item.type === 'quality' && item.note.code !== 'OK').map((item) => <g key={item.id} className={`tl-quality ${selected === item.id ? 'is-selected' : ''}`} role="button" tabIndex={0} aria-label={itemLabel(item)} onClick={() => onSelect(item.id)} onKeyDown={(event) => key(event, item.id)} onMouseEnter={() => onSelect(item.id)}>
-      <path d={`M${x(item.at)},${LANE.axis - 14} l5,9 h-10 z`} />
-    </g>)}
-
-    {/* answers: height = stated confidence, colour = graded result, halo = mismatch */}
-    {timeline.answers.map((moment) => {
-      const item = timeline.items.find((entry): entry is Extract<TimelineItem, { type: 'answer' }> => entry.type === 'answer' && entry.answer === moment)!;
-      const cx = x(item.at); const cy = CONF_Y[moment.confidence ?? 'none']!; const tone = scoreTone(moment.grade, moment.skipped);
-      return <g key={item.id} className={`tl-answer-mark tl-answer-mark--${tone} ${moment.kind === 'recheck' ? 'is-recheck' : ''} ${moment.revised ? 'is-revised' : ''} ${selected === item.id ? 'is-selected' : ''}`}
-        role="button" tabIndex={0} aria-label={itemLabel(item)} onClick={() => onSelect(item.id)} onKeyDown={(event) => key(event, item.id)} onMouseEnter={() => onSelect(item.id)}>
-        {moment.calibration.mismatch && !moment.revised && <circle className="tl-halo" cx={cx} cy={cy} r={14} />}
-        {moment.kind === 'recheck' ? <rect x={cx - 8} y={cy - 8} width={16} height={16} rx={4} /> : <circle cx={cx} cy={cy} r={8} />}
+    {/* one row per concept */}
+    {journeys.map((journey, index) => {
+      const cy = rowY(index); const top = HEAD + index * ROW;
+      const outcome = OUTCOME(journey);
+      const base = journey.baseline ? answerItem.get(journey.baseline) : undefined;
+      const after = journey.recheck ? answerItem.get(journey.recheck) : undefined;
+      const lines = wrapTitle(journey.concept.title);
+      const titleY = cy - (lines.length > 1 ? 13 : 4);
+      return <g key={journey.concept.id}>
+        <line className="tl-rowline" x1={0} x2={width} y1={top} y2={top} />
+        <text x={0} y={titleY} className="tl-row-label">{lines.map((line, lineIndex) => <tspan key={lineIndex} x={0} dy={lineIndex ? 16 : 0}>{line}</tspan>)}<title>{journey.concept.title}</title></text>
+        <text x={0} y={titleY + (lines.length > 1 ? 33 : 17)} className="tl-row-sub">{outcome.label}{journey.focus ? ' · focus' : ''}</text>
+        {base && after && <line className={`tl-link-line is-${outcome.key}`} x1={x(base.at)} x2={x(after.at)} y1={cy} y2={cy} />}
+        {messages.filter((item) => item.role === 'learner' && item.conceptIds.includes(journey.concept.id)).map((item) =>
+          <line key={`${journey.concept.id}-${item.id}`} className="tl-turn" x1={x(item.at)} x2={x(item.at)} y1={cy - 9} y2={cy + 9} />)}
+        {base && mark(base, cy)}
+        {after && mark(after, cy)}
       </g>;
     })}
 
-    {/* selection guide */}
-    {selectedItem && <line className="tl-guide" x1={x(selectedItem.at)} x2={x(selectedItem.at)} y1={LANE.knowledge - 6} y2={LANE.axis} />}
+    {/* conversation with Alex, and Alex's questions */}
+    {convTop !== undefined && <>
+      <line className="tl-rowline" x1={0} x2={width} y1={convTop} y2={convTop} />
+      {laneLabel(convTop, CONV_LANE, 'With Alex')}
+      {conversations.map((item) => {
+        const end = timeline.items.find((other) => other.type === 'conversation' && other.conversationId === item.conversationId && other.edge === 'ended')?.at ?? timeline.end;
+        const x0 = x(item.at); const w = Math.max(BAR_H, x(end) - x0); const cy = convTop + CONV_LANE / 2;
+        const count = messages.filter((message) => message.conversationId === item.conversationId).length;
+        const label = `${item.channel === 'voice' ? 'Voice' : 'Text'}${count ? ` · ${count} message${count === 1 ? '' : 's'}` : ''}`;
+        const fitsAfter = x0 + w + 8 + label.length * 6.5 <= plotX1;
+        return <g key={item.id} className="tl-convo" aria-label={itemLabel(item)} {...interactive(item.id)}>
+          <text className="tl-convo-text" x={fitsAfter ? x0 + w + 8 : x0 - 8} y={cy + 4} textAnchor={fitsAfter ? 'start' : 'end'}>{label}</text>
+          <rect x={x0} y={cy - BAR_H / 2} width={w} height={BAR_H} rx={BAR_H / 2} className={selected === item.id ? 'is-selected' : ''} />
+        </g>;
+      })}
+      {messages.filter((item) => item.role === 'student' && item.question).map((item) => {
+        const cx = x(item.at); const cy = convTop + CONV_LANE / 2;
+        return <g key={item.id} className={`tl-ask ${selected === item.id ? 'is-selected' : ''}`} aria-label={`${itemLabel(item)}: ${clip(item.text, 80)}`} {...interactive(item.id)}>
+          <rect x={cx - 5} y={cy - 5} width={10} height={10} transform={`rotate(45 ${cx} ${cy})`} />
+        </g>;
+      })}
+    </>}
 
-    {/* axis */}
-    <line className="tl-axis" x1={PAD_L} x2={width - PAD_R} y1={LANE.axis} y2={LANE.axis} />
-    {axisTicks.map((tick) => <text key={tick.x} className="tl-tick" x={tick.x + 2} y={LANE.axis + 15}>{tick.label}</text>)}
+    {/* reliable camera readings only */}
+    {pulseTop !== undefined && signal('pulse', pulseValid, pulseTop, PULSE_LANE)}
+    {breathTop !== undefined && signal('breathing', breathValid, breathTop, BREATH_LANE)}
+
+    <line className="tl-axis" x1={0} x2={width} y1={bottom} y2={bottom} />
   </svg>;
+}
+
+/** Plain-language notes for what the chart couldn't draw. */
+function chartNotes(timeline: SessionTimeline): string[] {
+  const notes: string[] = [];
+  if (!timeline.items.some((item) => item.type === 'conversation')) notes.push('No conversation with Alex was recorded.');
+  if (timeline.windows.length) {
+    const pulse = timeline.samples.pulse.some((sample) => sample.valid); const breathing = timeline.samples.breathing.some((sample) => sample.valid);
+    if (!pulse && !breathing) notes.push('The camera was on, but no pulse or breathing reading was reliable enough to plot.');
+    else if (!pulse) notes.push('No pulse reading was reliable enough to plot.');
+    else if (!breathing) notes.push('No breathing reading was reliable enough to plot.');
+  }
+  return notes;
 }
 
 /* ---------- list alternative (mobile and screen readers) ---------- */
@@ -256,16 +351,13 @@ function JourneyCard({ journey, timeline, onSelect, hadConversation }: { journey
     return id ? <button type="button" className="journey-step" onClick={() => onSelect(id)}>{body}</button> : <div className="journey-step">{body}</div>;
   };
   const talk = journey.mentions.learner + journey.mentions.alexQuestions;
-  return <li className={`journey card concept-result--${outcome.key}`}>
-    <div className="concept-result-head"><strong>{journey.concept.title}</strong><span className={`outcome outcome--${outcome.key}`}>{outcome.key === 'improved' && <PracticeIcon name="trend" size={13} strokeWidth={2} />}{outcome.label}</span></div>
-    <div className="journey-steps">
+  return <li className={`journey concept-result--${outcome.key}`}>
+    <strong className="journey-title">{journey.concept.title}</strong>
       {step('First check', journey.baseline, journey.baselineGrade)}
-      <span className="journey-link" aria-hidden="true" />
       {firstMention ? <button type="button" className="journey-step journey-step--alex" onClick={() => onSelect(firstMention)}><small>With Alex</small><span className="small">{journey.mentions.learner ? `You named it ${journey.mentions.learner}×` : 'You didn’t name it'}{journey.mentions.alexQuestions ? ` · Alex asked ${journey.mentions.alexQuestions} question${journey.mentions.alexQuestions === 1 ? '' : 's'}` : ''}</span>{journey.focus && <span className="focus-tag">Focus concept</span>}</button>
         : <div className="journey-step journey-step--alex"><small>With Alex</small><span className="small muted">{!hadConversation ? 'No conversation was recorded' : talk ? '' : 'Not named in the saved transcript'}</span>{journey.focus && <span className="focus-tag">Focus concept</span>}</div>}
-      <span className="journey-link" aria-hidden="true" />
       {step('Follow-up', journey.recheck, journey.recheckGrade)}
-    </div>
+    <span className={`outcome outcome--${outcome.key}`}>{outcome.key === 'improved' && <PracticeIcon name="trend" size={13} strokeWidth={2} />}{outcome.label}</span>
     {journey.recheckGrade?.feedback && <p className="journey-feedback">{journey.recheckGrade.feedback}</p>}
   </li>;
 }
@@ -289,7 +381,8 @@ function Glance({ session, timeline, journeys }: { session: PracticeSession; tim
 
 /* ---------- section ---------- */
 
-export function ReadinessInsights({ session }: { session: PracticeSession }) {
+/** `beforeConcepts` is rendered just above the concept table. */
+export function ReadinessInsights({ session, beforeConcepts }: { session: PracticeSession; beforeConcepts?: ReactNode }) {
   const timeline = useMemo(() => buildTimeline(session), [session]);
   const journeys = useMemo(() => conceptJourneys(session, timeline), [session, timeline]);
   const notable = timeline.answers.filter((moment) => !moment.revised && (moment.calibration.kind === 'confident_incorrect' || moment.calibration.kind === 'correct_unsure'));
@@ -307,6 +400,9 @@ export function ReadinessInsights({ session }: { session: PracticeSession }) {
   const hadConversation = session.cycles.some((cycle) => cycle.conversations.length > 0);
   const answersTimed = timeline.answers.length > 0;
   const simulated = timeline.simulated; const mock = session.providerMode === 'mock';
+  const talked = timeline.items.some((item) => item.type === 'conversation');
+  const readings = [...timeline.samples.pulse, ...timeline.samples.breathing].some((sample) => sample.valid);
+  const notes = chartNotes(timeline);
 
   return <section className="insights" aria-labelledby="insights-heading">
     <header className="insights-head">
@@ -331,20 +427,26 @@ export function ReadinessInsights({ session }: { session: PracticeSession }) {
     <div className="tl card">
       {!answersTimed && <p className="muted small tl-legacy"><PracticeIcon name="info" size={14} />This session was recorded before answer timing was added, so only the stored timestamps (grading, conversations, readings) are shown.</p>}
       {view === 'chart' ? <>
-        <div className="tl-frame" ref={frame}>{width > 0 && <TimelineChart timeline={timeline} selected={selected} onSelect={setSelected} width={Math.max(width, 640)} />}</div>
+        <div className="tl-frame" ref={frame}>{width > 0 && <TimelineChart timeline={timeline} journeys={journeys} selected={selected} onSelect={setSelected} width={Math.max(width, 640)} />}</div>
+        {notes.length > 0 && <p className="tl-notes small muted">{notes.join(' ')}</p>}
         <ul className="tl-legend small" aria-label="Legend">
           <li><i className="lg-dot lg-dot--full" />Correct</li><li><i className="lg-dot lg-dot--partial" />Partly correct</li><li><i className="lg-dot lg-dot--zero" />Incorrect</li><li><i className="lg-dot lg-dot--skipped" />Skipped</li>
-          <li><i className="lg-shape lg-shape--circle" />First check</li><li><i className="lg-shape lg-shape--square" />Follow-up</li><li><i className="lg-halo" />Confidence and result differed</li><li><i className="lg-ask" />Alex asked</li>
-          {timeline.windows.length > 0 && <li><i className="lg-window" />Camera on{simulated ? ' (simulated)' : ''}</li>}{timeline.windows.length > 0 && <li><i className="lg-quality" />Signal issue</li>}{timeline.windows.length > 0 && <li><i className="lg-invalid" />Unreliable reading (not plotted)</li>}
+          <li><i className="lg-shape lg-shape--circle" />First check</li><li><i className="lg-shape lg-shape--square" />Follow-up</li><li><i className="lg-line lg-line--improved" />Improved</li><li><i className="lg-line lg-line--lower" />Lower this time</li>
+          <li><i className="lg-halo" />Confidence and result differed</li>{talked && <><li><i className="lg-turn" />You named the concept</li><li><i className="lg-ask" />Alex asked</li></>}
+          {readings && <li><i className="lg-window" />Camera on{simulated ? ' (simulated)' : ''}</li>}
         </ul>
         {selectedItem ? <Details item={selectedItem} session={session} timeline={timeline} onSelect={setSelected} /> : <p className="tl-detail tl-detail--empty muted small">Hover or select any mark to see what happened at that moment.</p>}
       </> : <TimelineList timeline={timeline} selected={selected} onSelect={(id) => setSelected((current) => current === id ? undefined : id)} session={session} />}
-      <p className="tl-footnote small muted">Answer height shows how sure you said you were; colour shows the grade. Camera readings are plotted only when Presage reported them reliable, and are shown alongside learning events for reflection. They don’t measure anxiety or confidence, and a change during a phase doesn’t mean that activity caused it.</p>
+      <p className="tl-footnote small muted">Each row is one concept. Its first-check and follow-up answers show how sure you said you were and your score; the line between them shows the change. Camera readings are plotted only when Presage reported them reliable, and are shown alongside learning events for reflection. They don’t measure anxiety or confidence, and a change during a phase doesn’t mean that activity caused it.</p>
     </div>
 
-    <section aria-labelledby="journeys-heading" className="results-section">
-      <h3 id="journeys-heading">Concept by concept</h3>
+    {beforeConcepts}
+
+    <section aria-label="Concept by concept" className="results-section">
+      <div className="journeys-wrap card">
+        <div className="journeys-head" aria-hidden="true"><span>Concept</span><span>First check</span><span>With Alex</span><span>Follow-up</span><span /></div>
       <ul className="journeys">{journeys.map((journey) => <JourneyCard key={journey.concept.id} journey={journey} timeline={timeline} hadConversation={hadConversation} onSelect={(id) => { setSelected(id); if (view === 'chart') frame.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }} />)}</ul>
+      </div>
     </section>
   </section>;
 }

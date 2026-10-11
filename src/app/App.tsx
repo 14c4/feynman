@@ -11,14 +11,8 @@ function Providers() {
   return <SessionProvider><MonitoringProvider><Outlet /></MonitoringProvider></SessionProvider>;
 }
 
-// A small data router enables unsaved-draft blocking; no loaders or actions.
+// A small data router keeps the route tree simple; no loaders or actions.
 const router = createBrowserRouter([{
-  path: '/preview/:screen?',
-  lazy: async () => {
-    const { PreviewApp } = await import('../features/preview/PreviewApp');
-    return { Component: PreviewApp };
-  },
-}, {
   element: <Providers />,
   children: [{
     element: <AppLayout />,

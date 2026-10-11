@@ -1,6 +1,9 @@
 import type { PracticeSession, PracticeStage } from '../../../shared/types';
 
-export const STEPS = ['Prepare', 'Check', 'Teach Alex', 'Recheck', 'Results'] as const;
+/** Fired by the study stepper; the teaching panel ends any live call, then starts the follow-up check. */
+export const START_RECHECK_EVENT = 'feynman:start-recheck';
+
+export const STEPS = ['Prepare', 'Check', 'Teach', 'Recheck', 'Results'] as const;
 
 export function stepIndex(stage: PracticeStage): number {
   switch (stage) {

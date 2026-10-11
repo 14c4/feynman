@@ -4,6 +4,7 @@
 .results-head .eyebrow { color: var(--accent); }
 .results-head h1 { margin: 0; font-size: clamp(2rem, 1.6rem + 1.6vw, 2.75rem); letter-spacing: -0.04em; line-height: 1.1; }
 .results-head p { margin: 0; }
+.results-title { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s-4); }
 
 .compare { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: var(--s-6); padding: var(--s-6); box-shadow: var(--shadow-md); }
 .compare-col { display: grid; align-content: start; gap: var(--s-3); }
@@ -65,13 +66,6 @@
 .review-feedback { padding: var(--s-2) var(--s-3); border-left: 2px solid var(--green-300); background: var(--green-50); border-radius: 0 var(--r-sm) var(--r-sm) 0; font-size: var(--text-sm); }
 .answer-review article > p { font-size: var(--text-sm); }
 
-.reflection { display: flex; align-items: center; justify-content: space-between; gap: var(--s-5); padding: var(--s-5) var(--s-6); box-shadow: var(--shadow-xs); }
-.reflection h3 { margin: var(--s-1) 0; font-size: var(--text-md); }
-.reflection p { margin: 0; }
-.reflection .rating-scale { width: 240px; }
-.reflection .rating-ends { margin-top: 4px; }
-
-.results-actions { display: flex; justify-content: flex-end; gap: var(--s-3); padding-top: var(--s-2); }
 
 .review-sheet { display: grid; gap: var(--s-4); padding: var(--s-5) var(--s-6); box-shadow: var(--shadow-xs); }
 .review-sheet-head { display: flex; justify-content: space-between; align-items: center; gap: var(--s-4); }
@@ -108,10 +102,7 @@
   .compare-mid { grid-auto-flow: column; justify-content: start; }
   .compare-mid svg { transform: rotate(90deg); }
   .concept-results, .results-split { grid-template-columns: 1fr; }
-  .next-step, .reflection { flex-direction: column; align-items: stretch; }
-  .reflection .rating-scale { width: 100%; }
+  .next-step { flex-direction: column; align-items: stretch; }
   .review-sheet { padding: var(--s-5); }
   .review-sheet-head { flex-direction: column; }
-  .results-actions { flex-direction: column-reverse; }
-  .results-actions .button { width: 100%; }
 }

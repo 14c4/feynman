@@ -4,54 +4,28 @@ import { loadIntegrationHealth, PracticeApiError, practiceApi } from '../service
 import { SessionContext } from './useSessions';
 import { initialSessionState, sessionReducer, type SessionAction, type SessionState } from './sessionReducer';
 
-const STORAGE_KEY = 'feynman.practice.v1';
-interface BrowserSnapshot { version: 1; tokens: Record<string, string>; sessions: Record<string, PracticeSession> }
 interface Draft extends UpdatePracticeInput { attemptId: string; revision: number }
 
-function readSnapshot(): BrowserSnapshot {
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null');
-    if (value && typeof value === 'object' && 'version' in value && value.version === 1 && 'tokens' in value && 'sessions' in value) {
-      const snapshot = value as BrowserSnapshot;
-      if (snapshot.tokens && snapshot.sessions && typeof snapshot.tokens === 'object' && typeof snapshot.sessions === 'object') {
-        const sessions = Object.fromEntries(Object.entries(snapshot.sessions).filter(([id, session]) => session && session.id === id && Array.isArray(session.attempts) && Array.isArray(session.cycles)));
-        const tokens = Object.fromEntries(Object.entries(snapshot.tokens).filter(([id, token]) => typeof token === 'string' && sessions[id]));
-        return { version: 1, tokens, sessions };
-      }
-    }
-  } catch { /* The UI reports storage write failures; unknown/old formats are not migrated as practice data. */ }
-  return { version: 1, tokens: {}, sessions: {} };
-}
-
+/** Sessions live only in this tab's memory: nothing is written to browser storage. */
 export function SessionProvider({ children }: { children: ReactNode }) {
-  const [snapshot] = useState(readSnapshot);
-  const [state, dispatch] = useReducer(sessionReducer, { ...initialSessionState, sessions: snapshot.sessions });
+  const [state, dispatch] = useReducer(sessionReducer, initialSessionState);
   const current = useRef<SessionState>(state);
-  const tokens = useRef(snapshot.tokens);
+  const tokens = useRef<Record<string, string>>({});
   const drafts = useRef<Record<string, Draft>>({});
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const queues = useRef<Record<string, Promise<unknown>>>({});
   const pendingActions = useRef<Record<string, Promise<void> | undefined>>({});
   const [draftStatus, setDraftStatus] = useState<Record<string, 'local' | 'saving' | 'saved'>>({});
-  const [storageError, setStorageError] = useState<string>();
   const [integration, setIntegration] = useState<IntegrationHealth>();
   const providerMode = integration ? integration.providerMode ?? 'real' : undefined;
-  const restored = useRef(false);
 
-  const persist = useCallback(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, tokens: tokens.current, sessions: current.current.sessions }));
-      setStorageError(undefined);
-    } catch { setStorageError('Browser saving is unavailable. Keep this tab open until saving works again.'); }
-  }, []);
   const send = useCallback((action: SessionAction) => {
     current.current = sessionReducer(current.current, action);
     dispatch(action);
-    if (action.type === 'receive' || action.type === 'draft' || action.type === 'remove') persist();
-  }, [persist]);
+  }, []);
   const tokenFor = useCallback((id: string) => {
     const token = tokens.current[id];
-    if (!token) throw new Error('This browser has no access reference for that session. Open a saved session from Home.');
+    if (!token) throw new Error('This session is no longer open in this tab. Start a new session from Home.');
     return token;
   }, []);
   const receive = useCallback((session: PracticeSession) => {
@@ -96,11 +70,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, [receive, tokenFor]);
   const loadSession = useCallback((id: string) => run(id, async () => receive(await practiceApi.load(id, tokenFor(id)))), [receive, run, tokenFor]);
-  const action = useCallback((id: string, name: 'prepare' | 'submit' | 'pause' | 'resume' | 'recheck' | 'teach' | 'cycles' | 'finish', input?: Record<string, string | boolean>) => {
+  const action = useCallback((id: string, name: 'prepare' | 'submit' | 'recheck' | 'teach' | 'cycles' | 'finish', input?: Record<string, string | boolean>) => {
     const key = `${id}:${name}`;
     const pending = pendingActions.current[key];
     if (pending) return pending;
-    const operation = run(id, async () => { if (name !== 'resume' && name !== 'prepare') await flush(id); receive(await practiceApi.action(id, tokenFor(id), name, input)); });
+    const operation = run(id, async () => { if (name !== 'prepare') await flush(id); receive(await practiceApi.action(id, tokenFor(id), name, input)); });
     pendingActions.current[key] = operation;
     const clear = () => { delete pendingActions.current[key]; };
     void operation.then(clear, clear);
@@ -127,8 +101,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [flush, run, send]);
   const submitAssessment = useCallback((id: string, attemptId: string) => action(id, 'submit', { attemptId }), [action]);
   const saveDraft = useCallback((id: string) => run(id, () => flush(id), false), [flush, run]);
-  const saveAndExit = useCallback((id: string) => action(id, 'pause'), [action]);
-  const resumeSession = useCallback((id: string) => action(id, 'resume'), [action]);
   const startRecheck = useCallback((id: string) => action(id, 'recheck'), [action]);
   const returnToTeaching = useCallback((id: string) => action(id, 'teach'), [action]);
   const practiceAgain = useCallback((id: string) => action(id, 'cycles'), [action]);
@@ -143,12 +115,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const session = await practiceApi.finalizeConversation(id, tokenFor(id), conversationId);
     receive(session);
   }, false), [receive, run, tokenFor]);
-  const removeSessions = useCallback(async (ids: string[]) => {
-    // Server deletion is best effort: a session lost on API restart is still removed from this browser.
-    await Promise.all(ids.map((id) => tokens.current[id] ? practiceApi.remove(id, tokens.current[id]).catch(() => undefined) : undefined));
-    for (const id of ids) { clearTimeout(timers.current[id]); delete drafts.current[id]; delete tokens.current[id]; }
-    send({ type: 'remove', sessionIds: ids });
-  }, [send]);
   const startTextConversation = useCallback((id: string) => run(id, async () => receive(await practiceApi.startTextConversation(id, tokenFor(id)))), [receive, run, tokenFor]);
   const startAttempt = useCallback((id: string, attemptId: string) => run(id, async () => {
     await flush(id);
@@ -181,27 +147,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return () => { active = false; };
   }, []);
   useEffect(() => {
-    if (restored.current) return;
-    restored.current = true;
-    for (const session of Object.values(snapshot.sessions)) {
-      const attempt = session.attempts.find((item) => item.kind === session.stage && !item.submittedAt);
-      if (attempt) drafts.current[session.id] = { attemptId: attempt.id, answers: attempt.answers, currentQuestionIndex: attempt.currentQuestionIndex, revision: 1 };
-      void loadSession(session.id).then(() => {
-        const latest = current.current.sessions[session.id];
-        if (drafts.current[session.id] && latest?.lifecycle === 'active') return saveDraft(session.id);
-      }).catch(() => undefined);
-    }
-  }, [loadSession, saveDraft, snapshot]);
-  useEffect(() => {
     const activeTimers = timers.current;
+    // Answers not yet synced to the server would be lost on reload, so warn before leaving.
     const warnUnsaved = (event: BeforeUnloadEvent) => {
-      persist();
       if (Object.keys(drafts.current).length) { event.preventDefault(); event.returnValue = ''; }
     };
     window.addEventListener('beforeunload', warnUnsaved);
     return () => { window.removeEventListener('beforeunload', warnUnsaved); Object.values(activeTimers).forEach(clearTimeout); };
-  }, [persist]);
-  return <SessionContext.Provider value={{ ...state, storageError, providerMode, integration, draftStatus, saveDraft, createSession, loadSession, prepareSession, updateDraft,
-    submitAssessment, saveAndExit, resumeSession, startRecheck, returnToTeaching, practiceAgain, finishSession, setNervousness,
-    requestVoice, generateReview, registerConversation, finalizeConversation, removeSessions, startTextConversation, sendTextMessage, startAttempt, startMonitoring, sendFrames, stopMonitoring }}>{children}</SessionContext.Provider>;
+  }, []);
+  return <SessionContext.Provider value={{ ...state, providerMode, integration, draftStatus, saveDraft, createSession, loadSession, prepareSession, updateDraft,
+    submitAssessment, startRecheck, returnToTeaching, practiceAgain, finishSession, setNervousness,
+    requestVoice, generateReview, registerConversation, finalizeConversation, startTextConversation, sendTextMessage, startAttempt, startMonitoring, sendFrames, stopMonitoring }}>{children}</SessionContext.Provider>;
 }
