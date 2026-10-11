@@ -4,7 +4,7 @@ import type { MonitoringPurpose, MonitoringStatus } from '../../../shared/types'
 import { useSessions } from '../../state/useSessions';
 import { MonitorContext, type MonitorState } from './monitoringContext';
 import {
-  batchLength, CAMERA_LADDER, constraintsFor, initialProcessingStep, MAX_QUEUE_MS, MIN_FPS, packBatch, pickConfig,
+  batchLength, CAMERA_LADDER, constraintsFor, GOOD_FPS, initialProcessingStep, MAX_QUEUE_MS, MIN_FPS, packBatch, pickConfig,
   PROCESSING_STEPS, RecoveryController, TARGET_FPS, type CameraConfig, type ProbeResult,
 } from './cameraPipeline';
 import { FrameCapture, probeFps, type CapturedFrame } from './frameCapture';
@@ -128,8 +128,21 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
   /** Opens the camera and a hidden <video> that keeps frames flowing for capture and tracking. */
   const openCamera = useCallback(async () => {
     if (!navigator.mediaDevices?.getUserMedia) throw new Error('This browser cannot use a camera on this page.');
-    const media = await navigator.mediaDevices.getUserMedia({ video: constraintsFor(CAMERA_LADDER[0]!), audio: false })
-      .catch((error: unknown) => { throw new Error(cameraError(error)); });
+    // Like Presage's reference app: ask for HD at a hard 25 fps minimum first, then relax. Only a
+    // permission or device error ends the attempts; an unsatisfiable constraint just moves on.
+    const first = CAMERA_LADDER[0]!;
+    const attempts: MediaStreamConstraints[] = [
+      { video: constraintsFor({ ...first, minFrameRate: MIN_FPS }), audio: false },
+      { video: constraintsFor(first), audio: false },
+      { video: { frameRate: { ideal: first.frameRate } }, audio: false },
+      { video: true, audio: false },
+    ];
+    let media: MediaStream | undefined; let failure: unknown;
+    for (const constraints of attempts) {
+      try { media = await navigator.mediaDevices.getUserMedia(constraints); break; }
+      catch (error) { failure = error; if (!(error instanceof DOMException) || error.name !== 'OverconstrainedError') break; }
+    }
+    if (!media) throw new Error(cameraError(failure));
     live.current = { stream: media };
     setStream(media);
     const video = document.createElement('video');
@@ -184,12 +197,12 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
         const settings = track.getSettings();
         results.push({ config, fps, width: settings.width ?? config.width, height: settings.height ?? config.height });
         setState((previous) => ({ ...previous, probe: `${settings.width ?? config.width}×${settings.height ?? config.height}: ${fps ? Math.round(fps) : '—'} fps` }));
-        if ((fps ?? 0) >= TARGET_FPS) break;
+        if ((fps ?? 0) >= GOOD_FPS) break;
       }
       let choice = pickConfig(results);
       // Some webcams lengthen exposure in dim light; asking for a minimum rate can keep them at speed.
-      if (choice && (choice.fps ?? 0) < TARGET_FPS) {
-        const strict = { ...choice.config, minFrameRate: TARGET_FPS };
+      if (choice && (choice.fps ?? 0) < GOOD_FPS) {
+        const strict = { ...choice.config, minFrameRate: MIN_FPS };
         if (await applyConfig(track, strict)) {
           const fps = await probeFps(track, video);
           if ((fps ?? 0) > (choice.fps ?? 0)) choice = { ...choice, config: strict, fps };
@@ -199,7 +212,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       if (!choice) {
         const best = Math.max(0, ...results.map((result) => result.fps ?? 0));
         release(); live.current = {};
-        setState({ phase: 'error', sessionId, error: `Your camera delivered at most ${Math.round(best)} fps (tried ${results.map((result) => result.config.label).join(', ')}). Presage needs at least about ${MIN_FPS} fps, so it is off for now. More light can help; your study session continues normally.` });
+        setState({ phase: 'error', sessionId, error: `Your camera delivered at most ${Math.round(best)} fps (tried ${results.map((result) => result.config.label).join(', ')}). Presage needs at least ${MIN_FPS} fps (it targets ${TARGET_FPS}), so it is off for now. More light can help; your study session continues normally.` });
         return;
       }
       let configIndex = CAMERA_LADDER.findIndex((config) => config.label === choice!.config.label);

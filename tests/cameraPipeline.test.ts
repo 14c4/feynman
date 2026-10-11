@@ -18,11 +18,12 @@ test('frame rate is measured from capture timestamps at 15, 20, 25 and 30 fps', 
 });
 
 test('camera configuration is chosen by measured, not advertised, rate', () => {
-  const [vga, hd, wide, small] = CAMERA_LADDER as [typeof CAMERA_LADDER[0], typeof CAMERA_LADDER[0], typeof CAMERA_LADDER[0], typeof CAMERA_LADDER[0]];
+  const [hd, vga, wide, small] = CAMERA_LADDER as [typeof CAMERA_LADDER[0], typeof CAMERA_LADDER[0], typeof CAMERA_LADDER[0], typeof CAMERA_LADDER[0]];
   const probe = (config: typeof vga, fps?: number) => ({ config, fps, width: config.width, height: config.height });
   assert.equal(pickConfig([probe(vga, 29.6)])?.config, vga);
   assert.equal(pickConfig([probe(vga, 18), probe(hd, 27)])?.config, hd, 'tries further before settling');
-  assert.equal(pickConfig([probe(vga, 20), probe(hd, 15), probe(wide, 22), probe(small, 21)])?.config, wide, 'below target: fastest usable camera is still tried');
+  assert.equal(pickConfig([probe(hd, 15), probe(vga, 26), probe(wide, 25.5), probe(small, 21)])?.config, vga, 'between 25 and the target: fastest usable camera is still tried');
+  assert.equal(pickConfig([probe(hd, 15), probe(vga, 24), probe(wide, 22)]), undefined, 'below 25 fps Presage reports FRAME_RATE_TOO_LOW, so nothing is sent');
   assert.equal(pickConfig([probe(vga, 8), probe(hd, undefined), probe(small, 11)]), undefined, `nothing reaches ${MIN_FPS} fps`);
 });
 
@@ -46,7 +47,7 @@ function run(seconds: number, sample: (t: number) => Partial<PipelineSample>, st
 
 test('recovery: 30 and 25 fps cameras run untouched', () => {
   for (const fps of [30, 25]) assert.deepEqual(run(60, () => ({ captureFps: fps, deliveredFps: fps, code: 'OK' })).actions, [], `${fps} fps`);
-  assert.ok(TARGET_FPS <= 25);
+  assert.equal(TARGET_FPS, 30); assert.equal(MIN_FPS, 25);
 });
 
 test('recovery: a sustained 20 fps camera steps down resolution; a momentary dip does not', () => {
@@ -140,4 +141,31 @@ test('rolling rates ignore stale frames', () => {
   const times = [0, 33, 66, 100, 133, 10_000, 10_033, 10_066, 10_100, 10_133];
   assert.ok(Math.abs(rollingFps(times, 10_133)! - 30) < 1);
   assert.equal(times[0], 10_000);
+});
+
+test('sendFrame refusals are counted, never treated as accepted, and a persistent refusal ends the window with a reason', async () => {
+  class RefusingSdk extends FakeSdk { sendFrame() { return false; } }
+  const module: PresageModule = { SmartSpectraSDK: RefusingSdk as unknown as PresageModule['SmartSpectraSDK'], decodeMetrics: () => ({}) };
+  const service = new MonitoringService({ env: { NODE_ENV: 'test', PRESAGE_API_KEY: 'k' }, loadPresage: async () => module });
+  const window = await service.start('s', 'in_session');
+  const origin = Date.now() * 1000;
+  const status = service.ingest('s', window.id, batch(Array.from({ length: 8 }, (_, index) => origin + index * 33_000), 96, 72), 96, 72);
+  assert.equal(status.pipeline!.received, 8);
+  assert.equal(status.pipeline!.rejected, 8);
+  assert.equal(status.pipeline!.accepted, 0);
+  assert.equal(status.window.framesReceived, 0, 'refused frames are not counted as received by Presage');
+  assert.equal(status.code, 'FRAMES_REJECTED');
+  service.close();
+});
+
+test('metrics that cannot be decoded are counted and reported, not dropped silently', async () => {
+  const module: PresageModule = { SmartSpectraSDK: FakeSdk as unknown as PresageModule['SmartSpectraSDK'], decodeMetrics: () => { throw new Error('bad wire format'); } };
+  const service = new MonitoringService({ env: { NODE_ENV: 'test', PRESAGE_API_KEY: 'k' }, loadPresage: async () => module });
+  const window = await service.start('s', 'in_session');
+  (FakeSdk.last!.handlers.metrics as unknown as (buffer: Buffer) => void)(Buffer.from([1, 2, 3]));
+  const status = service.ingest('s', window.id, batch([Date.now() * 1000], 96, 72), 96, 72);
+  assert.equal(status.presage!.metricsPackets, 1);
+  assert.equal(status.presage!.decodeErrors, 1);
+  assert.match(status.presage!.lastDecodeError!, /bad wire format/);
+  service.close();
 });

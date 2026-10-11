@@ -11,15 +11,16 @@
  * decisions) so they can be unit tested in Node; frameCapture.ts is the browser-only part.
  */
 
-/** Measured capture rate we aim for. Presage tunes for 30 fps; ordinary webcams jitter around it. */
-export const TARGET_FPS = 24;
-/**
- * Below this measured rate no configuration is worth sending. Between this and TARGET_FPS the
- * camera is tried, and Presage's own FRAME_RATE_TOO_LOW validation decides whether it is usable.
- */
-export const MIN_FPS = 12;
+/** The rate we request. Presage tunes for 30 fps (its reference app targets 30). */
+export const TARGET_FPS = 30;
+/** Presage reports FRAME_RATE_TOO_LOW below 25 fps; its reference app requires at least this. */
+export const MIN_FPS = 25;
+/** Below this no camera setting is worth keeping; between here and MIN_FPS, Presage's own validation decides. */
+const HARD_FLOOR_FPS = 12;
+/** A measured rate at or above this counts as meeting the target (webcams report 29.x for "30"). */
+export const GOOD_FPS = 27;
 /** Processing frames are downscaled so their long side is at most this many pixels (see PROCESSING_STEPS). */
-export const PROCESSING_LONG_SIDES = [480, 400, 320] as const;
+export const PROCESSING_LONG_SIDES = [640, 480, 400] as const;
 /** Frames queued in the browser beyond this age are dropped (and counted) instead of sent late. */
 export const MAX_QUEUE_MS = 1500;
 export const MAX_BATCH_BYTES = 6_000_000;
@@ -29,8 +30,8 @@ export interface CameraConfig { label: string; width: number; height: number; fr
 
 /** Tried in order. Requests use `ideal`, so a camera that cannot match exactly still opens. */
 export const CAMERA_LADDER: CameraConfig[] = [
-  { label: '640×480', width: 640, height: 480, frameRate: 30 },
   { label: '1280×720', width: 1280, height: 720, frameRate: 30 },
+  { label: '640×480', width: 640, height: 480, frameRate: 30 },
   { label: '640×360', width: 640, height: 360, frameRate: 30 },
   { label: '320×240', width: 320, height: 240, frameRate: 30 },
 ];
@@ -75,7 +76,7 @@ export interface ProbeResult { config: CameraConfig; fps?: number; width: number
 
 /** First configuration that reaches the target; otherwise the fastest one above the floor. */
 export function pickConfig(results: ProbeResult[]): ProbeResult | undefined {
-  const good = results.find((result) => (result.fps ?? 0) >= TARGET_FPS);
+  const good = results.find((result) => (result.fps ?? 0) >= GOOD_FPS);
   if (good) return good;
   const usable = results.filter((result) => (result.fps ?? 0) >= MIN_FPS).sort((a, b) => (b.fps ?? 0) - (a.fps ?? 0));
   return usable[0];
@@ -133,9 +134,9 @@ export class RecoveryController {
 
   evaluate(sample: PipelineSample, state: RecoveryState): RecoveryAction {
     const { elapsedMs: now, captureFps, deliveredFps } = sample;
-    const slowCapture = captureFps !== undefined && captureFps < TARGET_FPS;
+    const slowCapture = captureFps !== undefined && captureFps < MIN_FPS;
     const sdkTooLow = sample.code === 'FRAME_RATE_TOO_LOW';
-    const lossy = captureFps !== undefined && captureFps >= TARGET_FPS && ((deliveredFps !== undefined && deliveredFps < captureFps * 0.85) || sample.queueDrops > 2);
+    const lossy = captureFps !== undefined && captureFps >= MIN_FPS && ((deliveredFps !== undefined && deliveredFps < captureFps * 0.85) || sample.queueDrops > 2);
     this.lowCaptureSince = slowCapture || (sdkTooLow && !lossy) ? this.lowCaptureSince ?? now : undefined;
     this.lowDeliverySince = lossy ? this.lowDeliverySince ?? now : undefined;
     if (sdkTooLow) { if (this.tooLowSince === undefined) { this.tooLowSince = now; this.validAtTooLow = sample.validReadings; } } else this.tooLowSince = undefined;
@@ -149,7 +150,7 @@ export class RecoveryController {
     if (this.lowDeliverySince !== undefined && now - this.lowDeliverySince >= this.sustainMs && state.canLowerProcessing) return this.acted(now, { kind: 'lower_processing' });
     if (this.lowCaptureSince !== undefined && now - this.lowCaptureSince >= this.sustainMs && state.canLowerCapture) return this.acted(now, { kind: 'lower_capture' });
     if (!state.canLowerCapture) {
-      if (captureFps !== undefined && captureFps < MIN_FPS && this.lowCaptureSince !== undefined && now - this.lowCaptureSince >= this.sustainMs)
+      if (captureFps !== undefined && captureFps < HARD_FLOOR_FPS && this.lowCaptureSince !== undefined && now - this.lowCaptureSince >= this.sustainMs)
         return { kind: 'give_up', reason: `Your camera only delivered about ${Math.round(captureFps)} fps, below what Presage can measure reliably.` };
       // Presage keeps rejecting the rate and nothing reliable has come through: stop honestly.
       if (this.tooLowSince !== undefined && now - this.tooLowSince >= this.giveUpMs && sample.validReadings === this.validAtTooLow)
@@ -165,19 +166,19 @@ export class RecoveryController {
 }
 
 /**
- * Processing steps, best fidelity first. Raw RGB is lossless but heavy (~15 MB/s at 480 px and
+ * Processing steps, best fidelity first. Raw RGB is lossless but heavy (~20 MB/s at 640 px and
  * 30 fps), so it is only the starting point when the server runs on this machine; a remote server
  * starts with high-quality JPEG. When frames are lost after capture, recovery moves one step down.
  */
 export type FrameEncoding = 'rgb' | 'jpeg';
 export interface ProcessingStep { encoding: FrameEncoding; longSide: number }
 export const PROCESSING_STEPS: ProcessingStep[] = [
-  { encoding: 'rgb', longSide: 480 },
+  { encoding: 'rgb', longSide: 640 },
+  { encoding: 'jpeg', longSide: 640 },
   { encoding: 'jpeg', longSide: 480 },
   { encoding: 'jpeg', longSide: 400 },
-  { encoding: 'jpeg', longSide: 320 },
 ];
-export const JPEG_QUALITY = 0.9;
+export const JPEG_QUALITY = 0.92;
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 export function initialProcessingStep(hostname: string) { return LOCAL_HOSTS.has(hostname) ? 0 : 1; }
 

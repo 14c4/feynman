@@ -2,7 +2,7 @@
 .study { display: grid; gap: var(--s-6); }
 /* Presage rail beside the study content (the panel renders nothing when the server has no physiology). */
 .study-split { display: grid; gap: var(--s-6); align-items: start; }
-.study-split:has(> .presage-panel) { grid-template-columns: minmax(0, 1fr) 340px; }
+.study-split:has(> .presage-panel) { grid-template-columns: minmax(0, 1fr) 420px; }
 .study-main { display: grid; gap: var(--s-6); min-width: 0; }
 .focus-main:has(.presage-panel--rail) { max-width: calc(1320px + 2 * var(--s-8)); }
 .study:has(.study-split > .presage-panel) .study-head { max-width: none; }
@@ -172,7 +172,7 @@
 
 /* Teaching side panel */
 .teach-side { display: grid; gap: var(--s-3); position: sticky; top: 76px; }
-.teach:has(.presage-panel) { grid-template-columns: minmax(0, 1fr) 340px; }
+.teach:has(.presage-panel) { grid-template-columns: minmax(0, 1fr) 420px; }
 .teach-side:has(.presage-panel.is-active) { position: static; }
 .teach-side .presage-panel--rail { position: static; max-height: none; overflow: visible; }
 .side-card { padding: var(--s-5); display: grid; gap: var(--s-2); box-shadow: var(--shadow-xs); }
