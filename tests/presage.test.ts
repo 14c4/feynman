@@ -170,3 +170,11 @@ test('a new Presage session never starts while the previous one is still shuttin
   assert.deepEqual(order, ['construct', 'destroy:start', 'destroy:end', 'construct']);
   service.close();
 });
+
+test('the GPU-only arterial pressure model is never requested', async () => {
+  const module: PresageModule = { SmartSpectraSDK: FakeSdk as unknown as PresageModule['SmartSpectraSDK'], decodeMetrics: () => ({}), breathingMetrics: [2], cardioMetrics: [15, 16, 17] };
+  const service = new MonitoringService({ env: { NODE_ENV: 'test', PRESAGE_API_KEY: 'k' }, loadPresage: async () => module });
+  await service.start('s', 'in_session');
+  assert.deepEqual(FakeSdk.last!.options.requestedMetrics, [2, 15, 17], 'phasic-bp-inference needs Vulkan, which servers like Railway lack');
+  service.close();
+});

@@ -73,6 +73,12 @@ const SDK_FAILURES: Record<number, string> = {
 const FATAL_SDK_ERRORS = new Set([2, 4]);
 const BREATHING_RATE = 2;
 const HRV = 17;
+/**
+ * Part of the SDK's cardio bundle, but its model (phasic-bp-inference) needs a Vulkan GPU. On a
+ * server without one it fails to load, and Presage processing later fails (error 8). The app
+ * never shows it, so it is never requested.
+ */
+const ARTERIAL_PRESSURE_TRACE = 16;
 const EXPRESSIONS = 14;
 const PROCESSING: Record<number, PresageProcessing> = { 0: 'uninitialized', 1: 'idle', 2: 'starting', 3: 'running', 4: 'stopping', 5: 'error' };
 const HRV_MIN_CONFIDENCE = 50;
@@ -355,7 +361,8 @@ export class MonitoringService {
     // breathing output is discarded in readingsFromMetrics. PRESAGE_METRICS=pulse is an experiment:
     // a cardio-only graph that may need only the face, but is undocumented by Presage.
     const pulseOnly = this.env.PRESAGE_METRICS === 'pulse';
-    const requested = pulseOnly ? [PULSE_RATE, HRV, ...face] : [...(sdkModule.breathingMetrics ?? [BREATHING_RATE]), ...(sdkModule.cardioMetrics ?? [PULSE_RATE]), ...face];
+    const cardio = (sdkModule.cardioMetrics ?? [PULSE_RATE, HRV]).filter((metric) => metric !== ARTERIAL_PRESSURE_TRACE);
+    const requested = pulseOnly ? [PULSE_RATE, HRV, ...face] : [...(sdkModule.breathingMetrics ?? [BREATHING_RATE]), ...cardio, ...face];
     const sdk = new sdkModule.SmartSpectraSDK({ apiKey: this.env.PRESAGE_API_KEY ?? '', requestedMetrics: [...new Set(requested)] });
     live.presage.decoder = sdkModule.decodeMetrics ? 'ready' : 'unavailable';
     if (!sdkModule.decodeMetrics) { live.presage.lastDecodeError = this.decoderError ?? 'The SDK metrics decoder is not available.'; console.warn(`[presage] ${live.presage.lastDecodeError}`); }
