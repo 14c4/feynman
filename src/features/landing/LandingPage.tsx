@@ -157,7 +157,7 @@ function Showcase({ reduced, onHow }: { reduced: boolean; onHow: () => void }) {
 
       <div className="lp-hero-copy">
         <h1 className="lp-title"><span>Think you know it?</span> <em>Prove it.</em></h1>
-        <p className="lp-lede">Explain it to Alex. Find the gaps. Walk into the exam knowing what you know.</p>
+        <p className="lp-lede">Explain it to Alex. Find your gaps. Get that A+.</p>
         <div className="lp-cta">
           <Link className="button button--primary button--lg" to="/app">Try it out<span className="button-arrow"><PracticeIcon name="arrow" size={14} /></span></Link>
           <button type="button" className="button button--secondary button--lg" onClick={onHow}>How it works</button>
