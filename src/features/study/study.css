@@ -155,7 +155,7 @@
 .composer-meta .text-button { font-size: var(--text-xs); }
 
 /* Voice controls */
-.voice-controls { display: flex; justify-content: center; gap: var(--s-8); padding: var(--s-2) 0 var(--s-4); margin-top: auto; }
+.voice-controls { display: flex; justify-content: center; gap: var(--s-8); padding: var(--s-2) 0 var(--s-4); }
 .voice-button { display: grid; justify-items: center; gap: var(--s-2); padding: 0; border: 0; background: none; font-size: var(--text-xs); font-weight: 500; color: var(--muted); }
 .voice-button-circle { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 50%; background: var(--surface); border: 1px solid var(--line-strong); color: var(--text); box-shadow: var(--shadow-sm); transition: transform var(--t-fast) var(--ease), background-color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease); }
 .voice-button:hover:not(:disabled) .voice-button-circle { transform: translateY(-1px); box-shadow: var(--shadow-md); }
