@@ -305,7 +305,7 @@ function Overview({ session, onBegin }: { session: PracticeSession; onBegin: () 
         <span className="muted">{material.pages ? `${material.pages} ${material.pages === 1 ? 'page' : 'pages'}` : `${Math.round(material.characters / 1000)}k chars`}{material.truncated ? ' · beginning used' : ''}</span></li>)}</ul> : null}
     </div>
     <section className="concepts card" aria-labelledby="concepts-heading">
-      <h3 id="concepts-heading">Three concepts to practise</h3>
+      <h3 id="concepts-heading">Three concepts to practice</h3>
       <ol className="concept-list">{session.concepts.map((concept, index) => <li key={concept.id}><span className="concept-num mono">{index + 1}</span><div><strong>{concept.title}</strong>{concept.description && <p>{concept.description}</p>}</div></li>)}</ol>
     </section>
     <div className="overview-start">
@@ -351,7 +351,7 @@ function StudyContent({ sessionId }: { sessionId: string }) {
   </>;
   return <div className={`study study--${session.stage}`}>
     <header className="study-head">
-      <div>{heading.eyebrow && <span className="eyebrow">{heading.eyebrow}</span>}<h1 tabIndex={-1}>{showOverview ? 'Here’s what we’ll practise' : heading.title(session)}</h1>{session.stage !== 'teaching' && session.stage !== 'preparing' && session.stage !== 'baseline' && session.stage !== 'recheck' && !showOverview && <p className="muted">{session.title}</p>}</div>
+      <div>{heading.eyebrow && <span className="eyebrow">{heading.eyebrow}</span>}<h1 tabIndex={-1}>{showOverview ? 'Here’s what we’ll practice' : heading.title(session)}</h1>{session.stage !== 'teaching' && session.stage !== 'preparing' && session.stage !== 'baseline' && session.stage !== 'recheck' && !showOverview && <p className="muted">{session.title}</p>}</div>
       {session.stage === 'recheck' && <Button variant="secondary" size="sm" disabled={busy[sessionId] || session.lifecycle !== 'active'} onClick={() => void returnToTeaching(sessionId).catch(() => undefined)}><PracticeIcon name="back" size={14} />Back to Alex</Button>}
     </header>
     {session.stage === 'teaching' ? <ConversationProvider><TeachingPanel session={session} /></ConversationProvider> : <div className="study-split"><div className="study-main">

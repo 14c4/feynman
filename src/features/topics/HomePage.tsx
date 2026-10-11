@@ -14,7 +14,7 @@ function readBase64(file: File): Promise<string> {
   });
 }
 
-/** Optional prefill passed from Results (“practise this again”). */
+/** Optional prefill passed from Results (“practice this again”). */
 interface HomeState { topic?: string; description?: string }
 
 export function HomePage() {
@@ -62,11 +62,11 @@ export function HomePage() {
 
   return <div className="home">
     <header className="hero enter">
-      <h1 tabIndex={-1}>Learn it by explaining it.</h1>
+      <h1 tabIndex={-1}>Think you know it? <em>Prove it.</em></h1>
       <ol className="how" aria-label="How a session works">
-        <li><span className="how-num">1</span><div><strong>Check</strong><span>Three short questions</span></div></li>
-        <li><span className="how-num">2</span><div><strong>Teach</strong><span>Explain by voice or text</span></div></li>
-        <li><span className="how-num">3</span><div><strong>Recheck</strong><span>New questions, same ideas</span></div></li>
+        <li><span className="how-num">01</span><div><strong>Check</strong><span>Three short questions</span></div></li>
+        <li><span className="how-num">02</span><div><strong>Teach</strong><span>Explain by voice or text</span></div></li>
+        <li><span className="how-num">03</span><div><strong>Recheck</strong><span>New questions, same ideas</span></div></li>
       </ol>
     </header>
 

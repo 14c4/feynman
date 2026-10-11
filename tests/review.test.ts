@@ -49,7 +49,7 @@ test('a corrected misconception keeps the original next to the correction and re
   assert.match(section, /Gap resolved · First check 0\/2 · Follow-up 2\/2/);
   assert.ok(section.indexOf('Light is only needed for warmth') < section.indexOf('Corrected idea for b'), 'original appears before the correction');
   assert.match(section, /What changed\*\*\n\nYour follow-up named light/);
-  // A resolved gap is not pushed as the next thing to practise when nothing else is open.
+  // A resolved gap is not pushed as the next thing to practice when nothing else is open.
   assert.match(sheet.markdown, /## What to review next\n\n- Explain one of these ideas again/);
 });
 
@@ -86,12 +86,12 @@ test('a correct answer gets no manufactured correction, unless the transcript sh
     entry('f', { status: 'persistent_gap', originalExplanation: 'Oxygen is released.', originalIsQuote: true }),
     entry('g', { status: 'new_gap', newGapEvidence: 'Starch is made in the roots only', correctedUnderstanding: 'Leaves make and store starch too.' }),
     entry('f-unknown'),
-  ], reviewNext: [{ conceptId: 'f', focus: 'Practise oxygen.' }] }, 'gemini');
+  ], reviewNext: [{ conceptId: 'f', focus: 'Practice oxygen.' }] }, 'gemini');
   assert.deepEqual(sheet.concepts, [{ conceptId: 'f', status: 'strength' }, { conceptId: 'g', status: 'new_gap' }]);
   assert.equal(sheet.markdown.includes('### Title f'), false, 'no correction section for a demonstrated strength');
   assert.match(sheet.markdown, /## Already solid\n\n- \*\*Title f\*\* — First check 2\/2 · Follow-up 2\/2/);
   assert.match(sectionOf(sheet.markdown, 'Title g'), /Newly spotted gap/);
-  assert.equal(sheet.markdown.includes('Practise oxygen'), false, 'review-next only lists concepts that need review');
+  assert.equal(sheet.markdown.includes('Practice oxygen'), false, 'review-next only lists concepts that need review');
   // Without exact evidence the override is refused.
   const unsupported = buildReviewSheet(data, { concepts: [entry('g', { status: 'new_gap', newGapEvidence: 'roots make all the starch' })], reviewNext: [] }, 'gemini');
   assert.equal(unsupported.concepts[1]!.status, 'strength');

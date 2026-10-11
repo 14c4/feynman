@@ -193,7 +193,7 @@ export function createPracticeHandler(options: HandlerOptions = {}) {
            // Yes / No on a suggested rewrite: "Yes" adopts the server's own stored suggestion as the request; "No" keeps the original wording.
            const accept = body.acceptSuggestion === true; const keepOriginal = body.keepOriginal === true;
            if (accept) { if (!previous.suggestedPrompt) throw new PracticeError('There is no suggestion to accept. Continue with your own wording.'); session.description = previous.suggestedPrompt; }
-           const focus = session.description || 'Practise the key ideas in the study material and notes I provided.';
+           const focus = session.description || 'Practice the key ideas in the study material and notes I provided.';
            const request = record.topic ? `Topic: ${record.topic}\nWhat I want to learn: ${focus}` : focus;
            const output = await providers.generate(request, session.notes, typeof clarification === 'string' && !keepOriginal ? clarification : undefined, materialExcerpt(record.materials, EXCERPT_CHARACTERS.preparation) || undefined, keepOriginal || accept);
            if (output.kind === 'clarification') { session.preparation = { status: 'clarification', clarificationQuestion: output.question, ...(output.suggestion ? { suggestedPrompt: output.suggestion } : {}) }; await save(); json(res, 200, view(record)); return; }

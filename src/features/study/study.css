@@ -67,7 +67,7 @@
 .assess-main > .button { width: auto; }
 
 .qcard { overflow: hidden; }
-.qcard-top { display: flex; align-items: center; justify-content: space-between; gap: var(--s-4); padding: var(--s-4) var(--s-6); border-bottom: 1px solid var(--line); background: #fbfcfa; }
+.qcard-top { display: flex; align-items: center; justify-content: space-between; gap: var(--s-4); padding: var(--s-4) var(--s-6); border-bottom: 1px solid var(--line); background: var(--surface-muted); }
 .qcard-progress { display: flex; gap: 6px; flex: 1; max-width: 220px; }
 .qcard-progress span { flex: 1; height: 4px; border-radius: 999px; background: var(--green-100); position: relative; overflow: hidden; }
 .qcard-progress span::after { content: ''; position: absolute; inset: 0; background: var(--accent); transform: scaleX(0); transform-origin: left; transition: transform var(--t-slow) var(--ease); }
@@ -195,7 +195,7 @@
 .saved-conversations { display: grid; gap: var(--s-3); }
 .saved-conversations h3 { margin: 0; font-size: var(--text-sm); color: var(--muted); font-weight: 550; letter-spacing: 0; }
 
-.teach-foot { position: sticky; bottom: 0; z-index: 10; display: flex; align-items: center; justify-content: center; gap: var(--s-4); margin: 0 calc(-1 * var(--s-4)); padding: var(--s-3) var(--s-4); background: rgb(248 249 246 / 0.9); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-top: 1px solid var(--line); }
+.teach-foot { position: sticky; bottom: 0; z-index: 10; display: flex; align-items: center; justify-content: center; gap: var(--s-4); margin: 0 calc(-1 * var(--s-4)); padding: var(--s-3) var(--s-4); background: var(--background-glass); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-top: 1px solid var(--line); }
 .teach-foot-end { display: flex; align-items: center; justify-content: center; gap: var(--s-4); }
 
 /* Conversation records */

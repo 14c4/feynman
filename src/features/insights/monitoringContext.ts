@@ -70,4 +70,3 @@ export function purposeFor(session: PracticeSession): MonitoringPurpose {
 }
 
 /** Long enough for Presage's 30-second breathing warm-up plus some valid readings. */
-export const CHECKIN_SECONDS = 60;

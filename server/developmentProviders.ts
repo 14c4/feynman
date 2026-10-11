@@ -31,7 +31,7 @@ export function createDevelopmentProviders(env: NodeJS.ProcessEnv): Providers {
     async generate(_description, _notes, clarification, _material, keepOriginal) {
       await wait();
       if (scenario === 'prepare-error-once' && !preparationFailed) { preparationFailed = true; throw new PracticeError('DEV MOCK: simulated preparation failure. Retry to recover.', 503, 'MOCK_PREPARATION_ERROR'); }
-      if (scenario === 'clarification' && !clarification?.trim() && !keepOriginal) return { kind: 'clarification', question: 'DEV MOCK: which arithmetic skill would you like to practise?', suggestion: 'DEV MOCK: practise multi-digit multiplication and long division.' };
+      if (scenario === 'clarification' && !clarification?.trim() && !keepOriginal) return { kind: 'clarification', question: 'DEV MOCK: which arithmetic skill would you like to practice?', suggestion: 'DEV MOCK: practice multi-digit multiplication and long division.' };
       return { kind: 'ready', title: 'Development arithmetic fixture', scope: 'DEV MOCK: fixed addition, multiplication and division fixtures. Submitted topic, notes and uploaded files are not interpreted.', concepts: structuredClone(concepts) };
     },
     async transcribeImage({ name }) {
@@ -83,7 +83,7 @@ export function createDevelopmentProviders(env: NodeJS.ProcessEnv): Providers {
             studentMetaphor: '', refinedMetaphor: '', metaphorLimits: '', workedExample: `DEV MOCK: ${concept.followUp?.question ?? concept.firstCheck?.question ?? ''}\n1. Expected fixture total: ${concept.followUp?.expectedAnswer ?? concept.firstCheck?.expectedAnswer ?? ''}.`,
             whatChanged: `DEV MOCK: scores moved from ${concept.firstCheck?.score ?? 'skipped'}/2 to ${concept.followUp?.score ?? 'skipped'}/2.`, remember: '' };
         }),
-        reviewNext: gaps.map((concept) => ({ conceptId: concept.id, focus: `DEV MOCK: practise ${concept.title.toLowerCase()} with working shown.` })),
+        reviewNext: gaps.map((concept) => ({ conceptId: concept.id, focus: `DEV MOCK: practice ${concept.title.toLowerCase()} with working shown.` })),
       };
     },
     voice: unavailable,

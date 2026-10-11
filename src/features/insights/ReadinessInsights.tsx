@@ -404,10 +404,9 @@ export function ReadinessInsights({ session, beforeConcepts }: { session: Practi
   const readings = [...timeline.samples.pulse, ...timeline.samples.breathing].some((sample) => sample.valid);
   const notes = chartNotes(timeline);
 
-  return <section className="insights" aria-labelledby="insights-heading">
+  return <section className="insights" aria-label="Readiness insights">
     <header className="insights-head">
-      <div><span className="eyebrow"><PracticeIcon name="gauge" size={14} />Readiness insights</span><h2 id="insights-heading">Your session, moment by moment</h2>
-        <p className="muted small">What you thought you knew, what you showed, how Alex pushed you, and what changed, on one timeline.</p></div>
+      <div><span className="eyebrow"><PracticeIcon name="gauge" size={14} />Readiness insights</span></div>
       <div className="segmented" role="tablist" aria-label="Timeline view">
         <button type="button" role="tab" aria-selected={view === 'chart'} onClick={() => setView('chart')}><PracticeIcon name="trend" size={14} />Timeline</button>
         <button type="button" role="tab" aria-selected={view === 'list'} onClick={() => setView('list')}><PracticeIcon name="menu" size={14} />List</button>

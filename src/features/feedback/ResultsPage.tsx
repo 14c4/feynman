@@ -47,7 +47,7 @@ export function ResultsPage() {
   const stronger = concepts.filter((item) => item.outcome === 'improved' || item.outcome === 'solid');
   const weaker = concepts.filter((item) => item.last && item.last.score < item.last.maxScore);
   const weakTitles = weaker.map((item) => item.concept.title);
-  const practiseAgain = () => void navigate('/', { state: { topic: session.title, description: `Practise ${weakTitles.join(', ')} from ${session.title}.` } });
+  const practiceAgain = () => void navigate('/', { state: { topic: session.title, description: `Practice ${weakTitles.join(', ')} from ${session.title}.` } });
   const pending = conversations.some((segment) => segment.transcriptStatus === 'pending');
 
   return <div className="results">
@@ -75,7 +75,7 @@ export function ResultsPage() {
         {stronger.length ? <ul>{stronger.map((item) => <li key={item.concept.id}>{item.concept.title}</li>)}</ul> : <p className="muted small">None of the follow-up answers scored higher yet. That’s useful to know.</p>}
       </section>
       <section className="takeaway takeaway--warm card" aria-labelledby="practice-heading">
-        <h3 id="practice-heading"><span className="takeaway-icon"><PracticeIcon name="target" size={14} /></span>Still worth practising</h3>
+        <h3 id="practice-heading"><span className="takeaway-icon"><PracticeIcon name="target" size={14} /></span>Still worth practicing</h3>
         {weaker.length ? <ul>{weaker.map((item) => <li key={item.concept.id}>{item.concept.title}</li>)}</ul> : <p className="muted small">Every follow-up answer received full marks.</p>}
       </section>
     </div>
@@ -102,7 +102,7 @@ export function ResultsPage() {
       <div><span className="eyebrow">What to do next</span>
         <h3 id="next-heading">{weaker.length ? `Explain ${weakTitles.length === 1 ? weakTitles[0] : 'these ideas'} again in a fresh session` : 'Try teaching Alex a new topic'}</h3>
         <p className="muted small">{weaker.length ? 'Read the feedback above, revisit your notes on the gaps, then teach it again with new questions.' : 'Explaining something new is the best way to keep the habit going.'}</p></div>
-      {weaker.length ? <Button variant="secondary" onClick={practiseAgain}>Practice again<PracticeIcon name="arrow" size={16} /></Button> : <Link className="button button--secondary" to="/">New session<PracticeIcon name="arrow" size={16} /></Link>}
+      {weaker.length ? <Button variant="secondary" onClick={practiceAgain}>Practice again<PracticeIcon name="arrow" size={16} /></Button> : <Link className="button button--secondary" to="/">New session<PracticeIcon name="arrow" size={16} /></Link>}
     </section>
   </div>;
 }

@@ -27,7 +27,7 @@ export function AppLayout() {
   useEffect(() => {
     window.scrollTo(0, 0);
     document.querySelector<HTMLElement>('main h1')?.focus({ preventScroll: true });
-    document.title = `${isStudy ? 'Study' : isResults ? 'Reflection' : 'Learn it by explaining it'} · feynman.ai`;
+    document.title = `${isStudy ? 'Study' : isResults ? 'Reflection' : 'Think you know it? Prove it.'} · feynman.ai`;
   }, [pathname, isStudy, isResults]);
 
   const mockBar = mock && <div className="mock-bar" role="status"><PracticeIcon name="info" size={14} /><span><strong>Development mock provider.</strong> Fixed arithmetic questions and deterministic test grades · not Gemini · no provider requests.</span></div>;

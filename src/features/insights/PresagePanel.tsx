@@ -6,7 +6,7 @@ import { PracticeIcon, type PracticeIconName } from '../../components/practice/P
 import { useSessions } from '../../state/useSessions';
 import { coverMapping, presageStage, smoothBox, squareAround, warmupProgress, type Box, type Stage } from './faceGeometry';
 import type { TrackingStore } from './faceTracker';
-import { CHECKIN_SECONDS, PURPOSE_LABELS, purposeFor, useMonitor, type MonitorState } from './monitoringContext';
+import { PURPOSE_LABELS, purposeFor, useMonitor, type MonitorState } from './monitoringContext';
 import './presage.css';
 
 function useNow(active: boolean, every = 1000) {
@@ -183,7 +183,7 @@ export function PresagePanel({ session, layout = 'rail' }: { session: PracticeSe
     const error = mine && state.phase === 'error' ? state.error : undefined;
     const finished = mine ? state.finished : undefined;
     // Starting the camera always reveals the panel so the learner sees what is being captured.
-    const begin = (seconds?: number) => { setHidden(false); void start(session.id, purpose, seconds); };
+    const begin = () => { setHidden(false); void start(session.id, purpose); };
     return <section className={className} aria-labelledby="presage-title">
       <header className="presage-head">
         <span className="presage-mark"><PracticeIcon name="camera" size={15} /></span>
@@ -197,7 +197,6 @@ export function PresagePanel({ session, layout = 'rail' }: { session: PracticeSe
         {error && <p className="notice notice--warning presage-note" role="alert"><PracticeIcon name="alert" size={14} /><span>{error}</span><button type="button" className="icon-button" aria-label="Dismiss" onClick={dismiss}><PracticeIcon name="close" size={12} /></button></p>}
         <div className="presage-actions">
           <Button variant="secondary" onClick={() => begin()}><PracticeIcon name="camera" size={15} />Turn on camera</Button>
-          <Button variant="quiet" onClick={() => begin(CHECKIN_SECONDS)}><PracticeIcon name="clock" size={14} />{CHECKIN_SECONDS}-second check-in</Button>
         </div>
       </Collapsible>
     </section>;

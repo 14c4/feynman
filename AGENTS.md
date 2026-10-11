@@ -19,7 +19,7 @@ It is an educational tool. Optional nervousness ratings are self-reported reflec
   - *Voice*: ElevenLabs agent via `@elevenlabs/react` with a server-issued signed URL and dynamic variables (`session_id`, `session_title`, `focus_context`, `opening_question`). Mic permission is requested before any signed URL. Transcripts are fetched from ElevenLabs history with bounded retry and honest `pending / ready / incomplete` status.
   - *Text*: standalone server-backed conversation (Gemini `alexReply`), no microphone needed, 30-turn cap, retry for a failed reply.
   - Alex avatar reflects real state (idle, connecting, listening, user speaking, thinking, responding, interrupted, ended); voice mode follows live audio volume.
-- **Recheck and results** — matched follow-up questions on the same concepts, before/after comparison, per-concept outcomes, "practise again" prefill on Home, expandable question feedback and transcripts, optional after-rating, finish.
+- **Recheck and results** — matched follow-up questions on the same concepts, before/after comparison, per-concept outcomes, "practice again" prefill on Home, expandable question feedback and transcripts, optional after-rating, finish.
 - **DEV MOCK mode** — deterministic arithmetic fixtures, scripted labeled Alex text replies, voice disabled, and a labeled *test-only* teaching bypass. Only allowed with `NODE_ENV=development|test`; every mock surface is labeled.
 
 **Limits worth knowing:** sessions live in a process-memory `Map` (`MemorySessionStore`); restarting the API loses them. Extra practice cycles (`POST /cycles`) return 501. No auth, rate limiting or durable storage yet. Automated tests use mocks only; real Gemini/ElevenLabs behavior is verified manually.
