@@ -95,13 +95,47 @@ function Confidence({ value, threshold }: { value?: number; threshold: number })
 function VitalTile({ icon, label, unit, sample, warmupMs, threshold, elapsedMs, collecting }: { icon: PracticeIconName; label: string; unit: string; sample?: PhysiologySample; warmupMs: number; threshold: number; elapsedMs?: number; collecting: boolean }) {
   const progress = warmupProgress(elapsedMs, warmupMs);
   const remaining = elapsedMs === undefined ? undefined : Math.max(0, Math.ceil((warmupMs - elapsedMs) / 1000));
-  const value = sample?.valid ? Math.round(sample.value) : undefined;
-  const note = value !== undefined ? `confidence ${sample!.confidence}` : !collecting ? 'waiting for frames' : remaining ? `warming up · ${remaining}s` : sample ? `low confidence (${sample.confidence})` : 'collecting…';
-  return <div className="presage-tile" data-state={value !== undefined ? 'live' : 'wait'}>
-    <span className="presage-tile-label"><PracticeIcon name={icon} size={13} />{label}</span>
-    <strong className="presage-tile-value">{value ?? '—'}<small>{value !== undefined ? unit : ''}</small></strong>
-    {value === undefined && remaining ? <span className="presage-warmup" role="progressbar" aria-label={`${label} warm-up`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)}><span style={{ width: `${progress * 100}%` }} /></span> : <Confidence value={sample?.confidence} threshold={threshold} />}
+  // Real SDK values show as soon as they exist; until they pass Presage's reliability rules they are labeled preliminary.
+  const reliable = Boolean(sample?.valid);
+  const shown = sample && Number.isFinite(sample.value) ? Math.round(sample.value) : undefined;
+  const why = !sample ? undefined : !sample.stable ? 'not yet stable' : sample.confidence < threshold ? `confidence ${sample.confidence} (reliable from ${threshold})` : remaining ? 'still warming up' : 'outside the usual range';
+  const note = shown !== undefined ? (reliable ? `reliable · confidence ${sample!.confidence}` : `preliminary · ${why}`) : !collecting ? 'waiting for frames' : remaining ? `warming up · ${remaining}s` : 'waiting for Presage to report…';
+  return <div className="presage-tile" data-state={reliable ? 'live' : shown !== undefined ? 'prelim' : 'wait'}>
+    <span className="presage-tile-label"><PracticeIcon name={icon} size={13} />{label}{shown !== undefined && !reliable && <em className="presage-prelim-tag">preliminary</em>}</span>
+    <strong className="presage-tile-value">{shown ?? '—'}<small>{shown !== undefined ? unit : ''}</small></strong>
+    {shown === undefined && remaining ? <span className="presage-warmup" role="progressbar" aria-label={`${label} warm-up`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)}><span style={{ width: `${progress * 100}%` }} /></span> : <Confidence value={sample?.confidence} threshold={threshold} />}
     <span className="presage-tile-note">{note}</span>
+  </div>;
+}
+
+const SIGNAL_LABELS: Record<string, string> = {
+  OK: 'Good signal', NO_FACE_FOUND: 'No face found', MULTIPLE_FACES_FOUND: 'More than one face', FACE_NOT_CENTERED: 'Face not centred', FACE_SIZE_OUT_OF_RANGE: 'Face size off',
+  TOO_DARK: 'Too dark', TOO_BRIGHT: 'Too bright', CHEST_NOT_VISIBLE: 'Chest not visible', CAMERA_TUNING: 'Camera adjusting', FRAME_RATE_TOO_LOW: 'Frame rate too low',
+  EXCESSIVE_MOTION: 'Too much motion', FACE_TOO_CLOSE: 'Too close', FACE_TOO_FAR: 'Too far', FACE_TOO_HIGH: 'Face too high', FACE_TOO_LOW: 'Face too low', FACE_NOT_FORWARD: 'Face not forward',
+  FRAMES_REJECTED: 'Frames refused',
+};
+
+/** Measured pipeline facts, each from a real counter: camera rate, frames accepted, frames Presage consumed, SDK state, signal. */
+function Diagnostics({ state, simulated }: { state: MonitorState; simulated: boolean }) {
+  const status = state.status; const pipe = status?.pipeline; const sdk = status?.presage;
+  const cameraFps = state.camera?.fps;
+  const fpsTone = cameraFps === undefined ? undefined : cameraFps >= 27 ? 'ok' : cameraFps >= 25 ? 'fair' : 'bad';
+  const fmt = (value?: number) => value === undefined ? '—' : value.toFixed(value < 10 ? 1 : 0);
+  const signal = status?.code ? SIGNAL_LABELS[status.code] ?? status.code : undefined;
+  const signalTone = !status?.code ? undefined : status.code === 'OK' ? 'ok' : status.code === 'NO_FACE_FOUND' || status.code === 'FRAMES_REJECTED' ? 'bad' : 'fair';
+  const rows: { label: string; value: string; tone?: string; title?: string }[] = [
+    { label: 'Camera', value: state.camera ? `${state.camera.label} · ${fmt(cameraFps)} fps` : '—', tone: fpsTone, title: 'Measured from camera capture timestamps. Presage needs 25 fps or more.' },
+  ];
+  if (!simulated) rows.push(
+    { label: 'Sent', value: pipe ? `${pipe.accepted ?? 0} accepted · ${fmt(pipe.deliveredFps)} fps${pipe.rejected ? ` · ${pipe.rejected} refused` : ''}` : '—', tone: pipe?.rejected ? 'bad' : undefined, title: 'Frames the Presage SDK accepted. Accepted does not mean analysed.' },
+    { label: 'Analysed', value: pipe ? `${pipe.processed ?? 0} frames · ${fmt(pipe.processedFps)} fps` : '—', title: 'Frames Presage reports it actually fed into analysis.' },
+    { label: 'Presage', value: `${sdk?.processing ?? 'starting'} · ${sdk?.metricsPackets ?? 0} updates`, tone: sdk?.processing === 'error' ? 'bad' : sdk?.processing === 'running' ? 'ok' : undefined },
+    { label: 'Signal', value: signal ?? (sdk?.metricsPackets ? 'Receiving' : 'Waiting for Presage'), tone: signalTone },
+  );
+  const problem = sdk?.decodeErrors ? `${sdk.decodeErrors} Presage updates could not be read${sdk.lastDecodeError ? `: ${sdk.lastDecodeError}` : '.'}` : sdk?.decoder === 'unavailable' ? sdk.lastDecodeError : undefined;
+  return <div className="presage-diag">
+    <dl>{rows.map((row) => <div key={row.label} title={row.title}><dt>{row.label}</dt><dd data-tone={row.tone}>{row.value}</dd></div>)}</dl>
+    {problem && <p className="presage-diag-error" role="alert">{problem}</p>}
   </div>;
 }
 
@@ -156,7 +190,7 @@ export function PresagePanel({ session, layout = 'rail' }: { session: PracticeSe
         <li>Face tracking runs <strong>on this device</strong>; nothing it sees is uploaded.</li>
         {simulated ? <li><strong>Development mode:</strong> pulse and breathing are synthetic test values; no frames are sent.</li>
           : <li>Small, low-resolution frames go to this app’s server, where Presage SmartSpectra estimates pulse and breathing. Frames are processed and discarded; <strong>no video is stored</strong>.</li>}
-        <li>Readings are kept only when Presage reports them as reliable, with their quality noted.</li>
+        <li>Live values appear as soon as Presage reports them, marked preliminary until they meet Presage’s reliability rules. Only reliable readings are kept in your timeline.</li>
         <li>They are reflective information, <strong>not a diagnosis</strong>, and not a measure of anxiety, attention or understanding.</li>
         <li>Leaving the session turns the camera off.</li>
       </ul>}
@@ -185,7 +219,7 @@ export function PresagePanel({ session, layout = 'rail' }: { session: PracticeSe
   if (minimized) return <section className={className} aria-label="Presage camera insights">
     <div className="presage-mini">
       <span className="presage-pill presage-pill--inline" data-tone={stage.tone}><i aria-hidden="true" />{stage.label}</span>
-      {latest?.pulse?.valid && <span className="mono small"><PracticeIcon name="heart" size={12} />{Math.round(latest.pulse.value)} bpm</span>}
+      {latest?.pulse && <span className="mono small"><PracticeIcon name="heart" size={12} />{Math.round(latest.pulse.value)} bpm{latest.pulse.valid ? '' : ' (prelim.)'}</span>}
       {remaining !== undefined && <span className="mono small muted">{remaining}s</span>}
       <button type="button" className="icon-button" aria-label="Show the Presage camera" onClick={() => setMinimized(false)}><PracticeIcon name="camera" size={14} /></button>
       <button type="button" className="icon-button" aria-label="Stop Presage" disabled={state.phase === 'stopping'} onClick={() => void stop()}><PracticeIcon name="stop" size={12} /></button>
@@ -200,6 +234,7 @@ export function PresagePanel({ session, layout = 'rail' }: { session: PracticeSe
     </header>
     <p className="sr-only" aria-live="polite">{stage.label}</p>
     <CameraStage state={state} stream={stream} tracking={tracking} stage={stage} guidance={guidance} simulated={simulated} />
+    <Diagnostics state={state} simulated={simulated} />
     <div className="presage-tiles">
       <VitalTile icon="heart" label="Pulse" unit="bpm" sample={latest?.pulse} warmupMs={MONITORING_LIMITS.pulseWarmupMs} threshold={MONITORING_LIMITS.pulseMinConfidence} elapsedMs={status?.elapsedMs} collecting={collecting} />
       <VitalTile icon="wave" label="Breathing" unit="/min" sample={latest?.breathing} warmupMs={MONITORING_LIMITS.breathingWarmupMs} threshold={MONITORING_LIMITS.breathingMinConfidence} elapsedMs={status?.elapsedMs} collecting={collecting} />

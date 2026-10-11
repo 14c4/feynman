@@ -78,7 +78,7 @@ Browser (React + Vite)                         Node API (http, no framework)
           ▲  ElevenLabs voice (signed URL, WebSocket)        │ Gemini · ElevenLabs · Presage
 ```
 
-**Why camera frames go through the server:** Presage SmartSpectra has no browser SDK. Its JavaScript runtime is the Node SDK (`@smartspectra/node-sdk`). The browser downsizes each camera frame (long side ≤ 480 px) and posts small ordered batches to the API. The API feeds them to the SDK with `useCustomInput()` and `sendFrame()`. Frames are processed in memory and discarded.
+**Why camera frames go through the server:** Presage SmartSpectra has no browser SDK. Its JavaScript runtime is the Node SDK (`@smartspectra/node-sdk`). The browser downsizes each camera frame (long side ≤ 640 px) and posts small ordered batches to the API. The API feeds them to the SDK with `useCustomInput()` and `sendFrame()`. Frames are processed in memory and discarded.
 
 **Event timeline:** the server appends a timestamped, sequence-numbered event for each real moment, such as an assessment starting, an answer being recorded, grading, teaching starting and nervousness self-reports. Conversation turns and physiology samples keep their own timestamps. `shared/insights.ts` merges these into a single ordered timeline. Nothing is back-filled after the fact.
 

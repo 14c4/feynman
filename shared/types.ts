@@ -242,6 +242,14 @@ export interface PipelineStats {
   outOfOrder: number;
   /** Frames Presage reported it did not use. */
   notProcessed: number;
+  /** Frames that reached the server (after decoding), whether or not the SDK took them. */
+  received?: number;
+  /** Frames `sendFrame()` accepted (returned true). Acceptance is not analysis: see `processed`. */
+  accepted?: number;
+  /** Frames `sendFrame()` refused (returned false). */
+  rejected?: number;
+  /** Frames Presage reported entering analysis (`frameSentThrough`, sent = true). */
+  processed?: number;
 }
 
 export interface PhysiologyHealth {
@@ -389,6 +397,11 @@ export interface PresageLiveState {
   processing?: PresageProcessing;
   /** Metrics packets delivered by the SDK in this window (0 means no analysis output yet). */
   metricsPackets: number;
+  /** Metrics packets that could not be decoded, with the latest reason. Never silently dropped. */
+  decodeErrors?: number;
+  lastDecodeError?: string;
+  /** Whether the protobuf decoder (`@smartspectra/node-sdk/messages`) loaded. */
+  decoder?: 'ready' | 'unavailable';
   /** Face analysis from Presage's face metrics, when the API key includes them. */
   face?: PresageFace;
   /** Latest heart-rate variability estimate, when the SDK provides one. */

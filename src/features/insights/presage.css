@@ -99,3 +99,16 @@
 @media (prefers-reduced-motion: reduce) {
   .presage-pill i { animation: none; }
 }
+
+/* Measured pipeline status and preliminary readings */
+.presage-tile[data-state='prelim'] { border-style: dashed; }
+.presage-tile[data-state='prelim'] .presage-tile-value { color: var(--muted); }
+.presage-prelim-tag { margin-left: auto; padding: 1px 6px; border-radius: 999px; background: var(--surface-sunken); font-size: 10px; font-style: normal; font-weight: 550; letter-spacing: 0.02em; color: var(--muted); }
+.presage-diag dl { margin: 0; display: grid; gap: 2px; font-size: var(--text-xs); }
+.presage-diag dl > div { display: flex; justify-content: space-between; gap: var(--s-3); padding: 3px 0; border-bottom: 1px solid var(--line); }
+.presage-diag dt { color: var(--muted); }
+.presage-diag dd { margin: 0; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--text); }
+.presage-diag dd[data-tone='ok'] { color: var(--accent); }
+.presage-diag dd[data-tone='fair'] { color: #a8741a; }
+.presage-diag dd[data-tone='bad'] { color: #c2402f; }
+.presage-diag-error { margin: var(--s-2) 0 0; font-size: var(--text-xs); color: #c2402f; }

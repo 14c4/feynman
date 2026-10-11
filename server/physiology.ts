@@ -57,6 +57,8 @@ const FRAME_TRANSFORM_NONE = 0;
 const PULSE_RATE = 15;
 const PROCESSING_STATUS_ERROR = 5;
 const SDK_REPORT_GRACE_MS = 1500;
+const REJECT_NOTE_AFTER = 5;
+const REJECT_FAIL_AFTER = 60;
 /** Plain explanations for SmartSpectraErrorCode values the learner can act on (or report). */
 const SDK_FAILURES: Record<number, string> = {
   2: 'Presage rejected the API key.',
@@ -90,6 +92,8 @@ interface Live {
   /** sendFrame threw; the window closes shortly, once the SDK has delivered its own reason. */
   sendError?: string;
   failing?: boolean;
+  /** Consecutive frames sendFrame() refused. */
+  rejectedRun: number;
   sdk?: PresageSdk;
   /** Simulated: seconds already emitted. */
   emitted?: number;
@@ -215,6 +219,7 @@ export class MonitoringService {
   private readonly source: PhysiologySource;
   private readonly loadPresage: ModuleLoader;
   private presage?: Promise<PresageModule>;
+  private decoderError?: string;
   private readonly sweeper: ReturnType<typeof setInterval>;
   private readonly maxActive?: number;
 
@@ -231,7 +236,9 @@ export class MonitoringService {
       const sdk = module.SmartSpectraSDK ? module : module.default;
       if (!sdk?.SmartSpectraSDK) throw new Error('SmartSpectra SDK export not found.');
       // The /messages entry registers the protobuf class so metrics decode to objects.
-      try { const messages = (await import(`${name}/messages`)) as { decodeMetrics?: PresageModule['decodeMetrics'] }; if (messages.decodeMetrics) return { ...sdk, decodeMetrics: messages.decodeMetrics }; } catch { /* fall back to the main export */ }
+      try { const messages = (await import(`${name}/messages`)) as { decodeMetrics?: PresageModule['decodeMetrics'] }; if (messages.decodeMetrics) return { ...sdk, decodeMetrics: messages.decodeMetrics }; this.decoderError = 'The SDK messages entry has no decodeMetrics.'; }
+      catch (error) { this.decoderError = `The SDK metrics decoder failed to load: ${error instanceof Error ? error.message.slice(0, 160) : 'unknown error'}`; console.warn(`[presage] ${this.decoderError}`); }
+      // The main entry bundles the same decoder; use it before giving up.
       return sdk;
     });
     this.sweeper = setInterval(() => this.sweep(), 5000);
@@ -260,7 +267,7 @@ export class MonitoringService {
     this.sweep();
     if (this.maxActive && [...this.live.values()].filter((item) => item.window.status === 'active').length >= this.maxActive) throw new PracticeError('Camera insights are at capacity on the server right now. Your session continues without them; try again in a few minutes.', 503, 'MONITORING_BUSY');
     const window: MonitoringWindow = { id: randomUUID(), source: this.source, purpose: purpose as MonitoringPurpose, startedAt: new Date().toISOString(), status: 'active', framesReceived: 0, samples: [], quality: [] };
-    const live: Live = { sessionId, window, lastActivity: Date.now(), lastFrameUs: 0, lastMetricUs: { pulse: 0, breathing: 0 }, readings: [], notes: [], accepted: [], consumed: [], stats: { outOfOrder: 0, notProcessed: 0 }, presage: { metricsPackets: 0 }, blinks: [] };
+    const live: Live = { sessionId, window, lastActivity: Date.now(), lastFrameUs: 0, lastMetricUs: { pulse: 0, breathing: 0 }, readings: [], notes: [], accepted: [], consumed: [], rejectedRun: 0, stats: { outOfOrder: 0, notProcessed: 0, received: 0, accepted: 0, rejected: 0, processed: 0 }, presage: { metricsPackets: 0, decodeErrors: 0 }, blinks: [] };
     if (this.source === 'simulated') { live.originMs = Date.now(); live.emitted = 0; }
     else await this.startPresage(live);
     this.live.set(window.id, live);
@@ -290,7 +297,13 @@ export class MonitoringService {
         if (image.width < 64 || image.height < 64 || image.width > LIMITS.maxWidth || image.height > LIMITS.maxHeight) throw new PracticeError('Frame size is invalid.');
         live.stats.width = image.width; live.stats.height = image.height;
         live.lastFrameUs = timestampUs; live.originMs ??= timestampUs / 1000;
-        try { live.sdk?.sendFrame(image.rgb, image.width, image.height, image.width * 3, PIXEL_FORMAT_RGB, timestampUs); live.window.framesReceived++; live.accepted.push(timestampUs / 1000); }
+        live.stats.received = (live.stats.received ?? 0) + 1;
+        try {
+          // true = the SDK queued the frame; false = refused (wrong state, bad timestamp or size). Neither means analysed.
+          const taken = live.sdk?.sendFrame(image.rgb, image.width, image.height, image.width * 3, PIXEL_FORMAT_RGB, timestampUs);
+          if (taken === false) { live.stats.rejected = (live.stats.rejected ?? 0) + 1; live.rejectedRun++; if (live.rejectedRun >= REJECT_FAIL_AFTER) { live.sendError = 'Presage kept refusing camera frames.'; break; } if (live.rejectedRun === REJECT_NOTE_AFTER) live.notes.push({ at: new Date().toISOString(), code: 'FRAMES_REJECTED', hint: 'Presage is refusing camera frames.' }); }
+          else { live.rejectedRun = 0; live.stats.accepted = (live.stats.accepted ?? 0) + 1; live.window.framesReceived++; live.accepted.push(timestampUs / 1000); }
+        }
         catch (error) { live.sendError = error instanceof Error ? error.message : 'Frame processing failed.'; break; }
       }
     } else if (live.window.status === 'active' && live.emitted !== undefined && live.originMs !== undefined) {
@@ -330,10 +343,19 @@ export class MonitoringService {
     const face = this.env.PRESAGE_FACE_METRICS !== 'on' ? [] : (sdkModule.faceMetrics ?? []).filter((metric) => metric !== EXPRESSIONS);
     const requested = [...(sdkModule.breathingMetrics ?? [BREATHING_RATE]), ...(sdkModule.cardioMetrics ?? [PULSE_RATE]), ...face];
     const sdk = new sdkModule.SmartSpectraSDK({ apiKey: this.env.PRESAGE_API_KEY ?? '', requestedMetrics: [...new Set(requested)] });
+    live.presage.decoder = sdkModule.decodeMetrics ? 'ready' : 'unavailable';
+    if (!sdkModule.decodeMetrics) { live.presage.lastDecodeError = this.decoderError ?? 'The SDK metrics decoder is not available.'; console.warn(`[presage] ${live.presage.lastDecodeError}`); }
     sdk.on('metrics', ((buffer: Buffer) => {
-      const decoded = sdkModule.decodeMetrics ? sdkModule.decodeMetrics(buffer) : undefined;
-      if (!decoded || Buffer.isBuffer(decoded)) return;
       live.presage.metricsPackets++;
+      let decoded: unknown;
+      try { decoded = sdkModule.decodeMetrics ? sdkModule.decodeMetrics(buffer) : undefined; }
+      catch (error) { decoded = undefined; live.presage.lastDecodeError = error instanceof Error ? error.message.slice(0, 200) : 'Metrics could not be decoded.'; }
+      if (!decoded || Buffer.isBuffer(decoded)) {
+        live.presage.decodeErrors = (live.presage.decodeErrors ?? 0) + 1;
+        live.presage.lastDecodeError ??= 'Metrics arrived but could not be decoded.';
+        if (live.presage.decodeErrors === 1) console.warn(`[presage] window ${live.window.id}: ${live.presage.lastDecodeError}`);
+        return;
+      }
       this.trackFace(live, decoded);
       const hrv = hrvFromMetrics(decoded); if (hrv) live.presage.hrv = hrv;
       for (const reading of readingsFromMetrics(decoded)) {
@@ -348,7 +370,7 @@ export class MonitoringService {
       live.notes.push({ at, code: name, hint: typeof hint === 'string' ? hint.slice(0, 200) : '' });
     }) as (...args: never[]) => void);
     // Presage's own report of whether each frame entered processing: the true processing rate.
-    sdk.on('frameSentThrough', ((sent: boolean, timestampUs: number) => { if (sent && Number.isFinite(timestampUs)) live.consumed.push(timestampUs / 1000); else if (!sent) live.stats.notProcessed++; }) as (...args: never[]) => void);
+    sdk.on('frameSentThrough', ((sent: boolean, timestampUs: number) => { if (sent && Number.isFinite(timestampUs)) { live.consumed.push(timestampUs / 1000); live.stats.processed = (live.stats.processed ?? 0) + 1; } else if (!sent) live.stats.notProcessed++; }) as (...args: never[]) => void);
     sdk.on('error', ((code: number, message: string, retryable: boolean) => {
       const detail = typeof message === 'string' ? message.slice(0, 200) : '';
       live.notes.push({ at: new Date().toISOString(), code: `ERROR_${code}`, hint: detail || 'Processing error.' });
