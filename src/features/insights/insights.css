@@ -5,7 +5,7 @@
   --score-zero: #c4614f;
   --score-skipped: var(--line-strong);
   --signal-pulse: #b5524a;
-  --signal-breathing: #4f7fa6;
+  --signal-camera: #4f7fa6;
   --phase-preparation: #f6f7f4;
   --phase-baseline: #f3f6ef;
   --phase-teaching: #eef4ef;
@@ -112,9 +112,8 @@
 /* Camera: a soft band behind the signal lanes, and the readings as lines */
 .tl-window { fill: rgb(79 127 166 / 0.08); stroke: none; }
 .tl-window--sim { fill: rgb(138 100 36 / 0.06); stroke: var(--warning-line); }
-.tl-pulse, .tl-breath { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.tl-pulse { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .tl-pulse { stroke: var(--signal-pulse); }
-.tl-breath { stroke: var(--signal-breathing); }
 
 .tl-legend { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-4); margin: 0; padding: 0; list-style: none; color: var(--muted); }
 .tl-legend li { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
@@ -175,7 +174,7 @@
 .tl-list-icon--zero { background: var(--score-zero); }
 .tl-list-icon--skipped, .tl-list-icon--none { background: none; border: 1.5px dashed var(--line-strong); }
 .tl-list-icon--message { transform: rotate(45deg); border-radius: 2px; background: var(--green-700); }
-.tl-list-icon--monitoring { background: var(--signal-breathing); }
+.tl-list-icon--monitoring { background: var(--signal-camera); }
 .tl-list-icon--quality { background: var(--warning-text); }
 .tl-list li > .tl-detail { margin: var(--s-1) 0 var(--s-3); }
 

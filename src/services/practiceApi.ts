@@ -3,7 +3,7 @@ import type { PracticeService } from './contracts/practice';
 import { accessToken } from './supabase';
 
 export class PracticeApiError extends Error {
-  constructor(message: string, readonly session?: PracticeSession, readonly status?: number) { super(message); }
+  constructor(message: string, readonly session?: PracticeSession, readonly status?: number, readonly code?: string) { super(message); }
 }
 
 async function request<T>(path: string, method: string, token?: string, input?: unknown): Promise<T> {
@@ -19,8 +19,8 @@ async function request<T>(path: string, method: string, token?: string, input?: 
   const value: unknown = await response.json().catch(() => null);
   if (!value || typeof value !== 'object') throw new PracticeApiError('The practice server returned an unreadable response. Please try again.');
   if (!response.ok) {
-    const data = value as { error?: { message?: string }; session?: PracticeSession };
-    throw new PracticeApiError(data.error?.message ?? 'The request could not be completed. Please try again.', data.session, response.status);
+    const data = value as { error?: { message?: string; code?: string }; session?: PracticeSession };
+    throw new PracticeApiError(data.error?.message ?? 'The request could not be completed. Please try again.', data.session, response.status, data.error?.code);
   }
   return value as T;
 }

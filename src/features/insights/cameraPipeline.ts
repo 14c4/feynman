@@ -165,6 +165,23 @@ export class RecoveryController {
   }
 }
 
+/*
+ * Automatic recovery. Once the learner turns Presage on, a failure that a fresh window can fix
+ * (server hiccup, lost connection, camera stall) restarts it after a backoff instead of ending it.
+ * Retries continue while the learner stays in the session; the cap keeps them cheap.
+ */
+export const RETRY_DELAYS_MS = [2000, 5000, 10_000, 20_000, 30_000] as const;
+/** A camera that delivers no frame for this long counts as stalled. */
+export const STALL_MS = 6000;
+/** A window that runs this long (or yields a valid reading) resets the backoff. */
+export const HEALTHY_RESET_MS = 60_000;
+
+/** Delay before retry number `attempt` (0-based). A too-slow camera waits longer: lighting takes time to change. */
+export function retryDelay(attempt: number, slow = false) {
+  const index = Math.max(0, Math.min(RETRY_DELAYS_MS.length - 1, Math.floor(attempt)));
+  return Math.max(slow ? 15_000 : 0, RETRY_DELAYS_MS[index]!);
+}
+
 /**
  * Processing steps, best fidelity first. Raw RGB is lossless but heavy (~20 MB/s at 640 px and
  * 30 fps), so it is only the starting point when the server runs on this machine; a remote server

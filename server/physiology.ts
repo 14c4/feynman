@@ -15,7 +15,10 @@ import { assertDevelopmentMode } from './developmentProviders.js';
  * JPEG (remote servers, roughly 15× less upload) and are decoded here. Frames are processed in
  * memory and dropped; only downsampled readings with their quality indicators are kept.
  *
- * Besides pulse and breathing, the SDK's face metrics (landmarks, blinking, talking) are
+ * Only pulse (and HRV) is kept: it needs nothing but the face, so the learner can sit naturally.
+ * The SDK is still configured with its documented breathing + cardio bundles (every Presage example
+ * includes breathing, and a cardio-only graph is undocumented), but breathing readings are
+ * discarded and its chest-visibility warnings are never shown. The SDK's face metrics (landmarks, blinking, talking) are
  * requested so the learner can see that Presage itself has locked onto their face. Expression
  * metrics are deliberately not requested: the app does not interpret expressions.
  *
@@ -66,7 +69,10 @@ const SDK_FAILURES: Record<number, string> = {
   5: 'The server could not reach Presage to verify the API key (network or TLS error).',
   6: 'Presage’s service returned an error.',
 };
+/** Account problems a new window cannot fix; the browser stops retrying when a window ends with one. */
+const FATAL_SDK_ERRORS = new Set([2, 4]);
 const BREATHING_RATE = 2;
+const HRV = 17;
 const EXPRESSIONS = 14;
 const PROCESSING: Record<number, PresageProcessing> = { 0: 'uninitialized', 1: 'idle', 2: 'starting', 3: 'running', 4: 'stopping', 5: 'error' };
 const HRV_MIN_CONFIDENCE = 50;
@@ -87,6 +93,8 @@ interface Live {
   lastCode?: string;
   hint?: string;
   failure?: string;
+  /** The SDK reported an error retrying cannot fix (see FATAL_SDK_ERRORS). */
+  fatal?: boolean;
   /** Last error the SDK reported, used to explain a later terminal state. */
   lastError?: string;
   /** sendFrame threw; the window closes shortly, once the SDK has delivered its own reason. */
@@ -128,23 +136,22 @@ const toNumber = (value: unknown): number => {
 
 /** Applies Presage's published reliability rules: warm-up window, stability, confidence threshold and valid range. */
 export function isValidReading(metric: PhysiologySample['metric'], value: number, confidence: number, stable: boolean, sinceOriginMs: number): boolean {
-  const [low, high] = metric === 'pulse' ? LIMITS.pulseRange : LIMITS.breathingRange;
-  const warmup = metric === 'pulse' ? LIMITS.pulseWarmupMs : LIMITS.breathingWarmupMs;
-  const threshold = metric === 'pulse' ? LIMITS.pulseMinConfidence : LIMITS.breathingMinConfidence;
-  return Number.isFinite(value) && stable && confidence >= threshold && sinceOriginMs >= warmup && value >= low && value <= high;
+  if (metric !== 'pulse') return false;
+  const [low, high] = LIMITS.pulseRange;
+  return Number.isFinite(value) && stable && confidence >= LIMITS.pulseMinConfidence && sinceOriginMs >= LIMITS.pulseWarmupMs && value >= low && value <= high;
 }
 
-/** Extracts pulse and breathing rate readings from a decoded Metrics message (camelCase protobuf fields). */
+/** Extracts pulse readings from a decoded Metrics message (camelCase protobuf fields). */
 export function readingsFromMetrics(decoded: unknown): Reading[] {
   if (!decoded || typeof decoded !== 'object') return [];
-  const data = decoded as { cardio?: { pulseRate?: unknown[] }; breathing?: { rate?: unknown[] } };
+  const data = decoded as { cardio?: { pulseRate?: unknown[] } };
   const pick = (metric: Reading['metric'], list: unknown[] | undefined): Reading[] => (Array.isArray(list) ? list : []).flatMap((item) => {
     const row = item as { value?: unknown; confidence?: unknown; stable?: unknown; timestamp?: unknown };
     const value = toNumber(row.value); const timestampUs = toNumber(row.timestamp);
     if (!Number.isFinite(value) || !Number.isFinite(timestampUs) || timestampUs <= 0) return [];
     return [{ metric, value, confidence: Math.max(0, Math.min(100, toNumber(row.confidence) || 0)), stable: row.stable === true, atMs: timestampUs / 1000 }];
   });
-  return [...pick('pulse', data.cardio?.pulseRate), ...pick('breathing', data.breathing?.rate)];
+  return pick('pulse', data.cardio?.pulseRate);
 }
 
 type Point = { x?: unknown; y?: unknown };
@@ -206,7 +213,6 @@ function simulatedReadings(second: number, originMs: number): Reading[] {
   const ramp = (warmupS: number) => Math.min(85, Math.round((second / warmupS) * 60 + (second > warmupS ? 25 : 0)));
   return [
     { metric: 'pulse', value: Math.round((72 + 5 * Math.sin(second / 25) + 2 * Math.sin(second / 7)) * 10) / 10, confidence: moving ? 20 : ramp(12), stable: !moving, atMs },
-    { metric: 'breathing', value: Math.round((14 + 2 * Math.sin(second / 40)) * 10) / 10, confidence: moving ? 20 : ramp(30), stable: !moving, atMs },
   ];
 }
 
@@ -222,6 +228,8 @@ export class MonitoringService {
   private decoderError?: string;
   private readonly sweeper: ReturnType<typeof setInterval>;
   private readonly maxActive?: number;
+  /** SDK sessions still shutting down. SDK state is process-global: a new session must not start until these finish. */
+  private readonly teardowns = new Set<Promise<void>>();
 
   constructor(options: MonitoringOptions = {}) {
     this.env = options.env ?? process.env;
@@ -339,9 +347,15 @@ export class MonitoringService {
 
   private async startPresage(live: Live) {
     const sdkModule = await this.module();
+    // Two SDK sessions must never overlap (an automatic restart can follow a stop within seconds).
+    while (this.teardowns.size) await Promise.all(this.teardowns);
     // Face metrics cost extra SDK processing and the app does not display them, so they are opt-in (PRESAGE_FACE_METRICS=on).
     const face = this.env.PRESAGE_FACE_METRICS !== 'on' ? [] : (sdkModule.faceMetrics ?? []).filter((metric) => metric !== EXPRESSIONS);
-    const requested = [...(sdkModule.breathingMetrics ?? [BREATHING_RATE]), ...(sdkModule.cardioMetrics ?? [PULSE_RATE]), ...face];
+    // Default: the documented bundle known to produce pulse readings (it needs the upper chest in view);
+    // breathing output is discarded in readingsFromMetrics. PRESAGE_METRICS=pulse is an experiment:
+    // a cardio-only graph that may need only the face, but is undocumented by Presage.
+    const pulseOnly = this.env.PRESAGE_METRICS === 'pulse';
+    const requested = pulseOnly ? [PULSE_RATE, HRV, ...face] : [...(sdkModule.breathingMetrics ?? [BREATHING_RATE]), ...(sdkModule.cardioMetrics ?? [PULSE_RATE]), ...face];
     const sdk = new sdkModule.SmartSpectraSDK({ apiKey: this.env.PRESAGE_API_KEY ?? '', requestedMetrics: [...new Set(requested)] });
     live.presage.decoder = sdkModule.decodeMetrics ? 'ready' : 'unavailable';
     if (!sdkModule.decodeMetrics) { live.presage.lastDecodeError = this.decoderError ?? 'The SDK metrics decoder is not available.'; console.warn(`[presage] ${live.presage.lastDecodeError}`); }
@@ -376,6 +390,7 @@ export class MonitoringService {
       live.notes.push({ at: new Date().toISOString(), code: `ERROR_${code}`, hint: detail || 'Processing error.' });
       live.lastError = SDK_FAILURES[code] ?? (detail || 'Presage processing stopped.');
       console.warn(`[presage] window ${live.window.id}: SDK error ${code}${retryable ? ' (retryable)' : ''}: ${detail}`);
+      if (FATAL_SDK_ERRORS.has(code)) live.fatal = true;
       if (!retryable) live.failure = live.lastError;
     }) as (...args: never[]) => void);
     // A retryable error can still leave the pipeline in its error state (e.g. the key could not be verified).
@@ -450,7 +465,7 @@ export class MonitoringService {
     }
     const elapsedMs = live.originMs === undefined ? undefined : this.source === 'presage' ? Math.max(0, live.lastFrameUs / 1000 - live.originMs) : Date.now() - live.originMs;
     return {
-      window: structuredClone(live.window), hint: live.hint, code: live.lastCode, latest: { pulse: latest('pulse'), breathing: latest('breathing') }, pipeline: live.window.pipeline,
+      window: structuredClone(live.window), hint: live.hint, code: live.lastCode, latest: { pulse: latest('pulse') }, pipeline: live.window.pipeline,
       elapsedMs: elapsedMs === undefined ? undefined : Math.round(elapsedMs),
       presage: this.source === 'presage' ? structuredClone(live.presage) : undefined,
     };
@@ -466,9 +481,16 @@ export class MonitoringService {
     if (live.window.status !== 'active') return;
     this.drain(live);
     live.window.status = status; live.window.endedAt = new Date().toISOString(); live.window.endReason = reason;
+    if (status === 'error' && live.fatal) live.window.fatal = true;
     if (status === 'error') console.warn(`[presage] window ${live.window.id} ended with an error after ${live.window.framesReceived} frames: ${reason}`);
     const sdk = live.sdk; live.sdk = undefined;
-    if (sdk) { try { if (sdk.stopAsync) await sdk.stopAsync(); else sdk.stop(); } catch { /* already stopped */ } try { await sdk.destroy(); } catch { /* already released */ } }
+    if (!sdk) return;
+    const teardown = (async () => {
+      try { if (sdk.stopAsync) await sdk.stopAsync(); else sdk.stop(); } catch { /* already stopped */ }
+      try { await sdk.destroy(); } catch { /* already released */ }
+    })();
+    this.teardowns.add(teardown);
+    try { await teardown; } finally { this.teardowns.delete(teardown); }
   }
 
   private sweep() {

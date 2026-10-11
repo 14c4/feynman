@@ -106,7 +106,7 @@ function Details({ item, session, timeline, onSelect }: { item: Selectable; sess
       : item.type === 'monitoring' ? <p>{PURPOSE_LABELS[item.window.purpose]} · camera {item.edge}. {item.edge === 'ended' && item.window.endReason ? item.window.endReason : ''} {item.edge === 'ended' ? `${item.window.samples.filter((sample) => sample.valid).length} reliable of ${item.window.samples.length} readings.` : ''}{item.edge === 'ended' && item.window.pipeline?.captureFps ? ` Camera measured at ${Math.round(item.window.pipeline.captureFps)} fps${item.window.pipeline.processedFps ? `; Presage processed ${Math.round(item.window.pipeline.processedFps)} fps` : ''}.` : ''}</p>
       : item.type === 'quality' ? <p>{item.note.code === 'OK' ? 'The camera signal became usable again.' : <>Signal quality changed: <strong>{item.note.hint || item.note.code}</strong>. Readings during poor signal are not plotted.</>}</p>
       : <p>{itemLabel(item)}.</p>}
-    {(near.pulse || near.breathing) ? <p className="tl-near small"><PracticeIcon name="heart" size={12} />Within 20 s of this moment{timeline.simulated ? ' (simulated)' : ''}: {near.pulse && <>pulse <span className="mono">{near.pulse.min === near.pulse.max ? near.pulse.mean : `${near.pulse.min}–${near.pulse.max}`} bpm</span></>}{near.pulse && near.breathing && ' · '}{near.breathing && <>breathing <span className="mono">{near.breathing.min === near.breathing.max ? near.breathing.mean : `${near.breathing.min}–${near.breathing.max}`} /min</span></>}</p>
+    {near.pulse ? <p className="tl-near small"><PracticeIcon name="heart" size={12} />Within 20 s of this moment{timeline.simulated ? ' (simulated)' : ''}: pulse <span className="mono">{near.pulse.min === near.pulse.max ? near.pulse.mean : `${near.pulse.min}–${near.pulse.max}`} bpm</span></p>
       : timeline.windows.length > 0 && <p className="tl-near tl-near--none small">No reliable camera reading near this moment.</p>}
   </div>;
 }
@@ -116,7 +116,7 @@ function Details({ item, session, timeline, onSelect }: { item: Selectable; sess
 /*
  * One row per concept, so each concept reads left to right: first check, what you said while teaching
  * Alex, then the follow-up. Below, a lane is drawn only when it has something to show: the conversation,
- * and reliable pulse and breathing readings. What's missing is said in words under the chart instead.
+ * and reliable pulse readings. What's missing is said in words under the chart instead.
  */
 const HEAD = 56;
 const ROW = 70;
@@ -126,7 +126,6 @@ const PAD_R = 40;
 const CONV_LANE = 52;
 const BAR_H = 14;
 const PULSE_LANE = 84;
-const BREATH_LANE = 72;
 const PLOT_PAD = 16;
 
 /** Short phase names for the band headers; the full name stays in the tooltip. */
@@ -166,7 +165,7 @@ function wrapTitle(title: string, max = 22): string[] {
 /** Which phases the chart spans: setup only when readings were taken then, and never the results screen. */
 function chartSpans(timeline: SessionTimeline): PhaseSpan[] {
   const firstCheck = timeline.phases.find((span) => span.phase === 'baseline')?.start;
-  const readings = [...timeline.samples.pulse, ...timeline.samples.breathing].filter((sample) => sample.valid);
+  const readings = timeline.samples.pulse.filter((sample) => sample.valid);
   const setupReadings = firstCheck !== undefined && readings.some((sample) => sample.t < firstCheck);
   const spans = timeline.phases.filter((span) => span.phase !== 'results' && (span.phase !== 'preparation' || setupReadings));
   if (spans.length) return spans;
@@ -181,7 +180,6 @@ function TimelineChart({ timeline, journeys, selected, onSelect, width }: { time
   const conversations = timeline.items.filter((item): item is Extract<TimelineItem, { type: 'conversation' }> => item.type === 'conversation' && item.edge === 'started');
   const selectedItem = timeline.items.find((item) => item.id === selected);
   const pulseValid = timeline.samples.pulse.filter((sample) => sample.valid);
-  const breathValid = timeline.samples.breathing.filter((sample) => sample.valid);
 
   // Vertical layout: concept rows, then only the lanes that have data.
   const rowY = (index: number) => HEAD + index * ROW + ROW / 2;
@@ -189,7 +187,6 @@ function TimelineChart({ timeline, journeys, selected, onSelect, width }: { time
   const convTop = conversations.length ? cursor : undefined; if (convTop !== undefined) cursor += CONV_LANE;
   const signalTop = cursor;
   const pulseTop = pulseValid.length ? cursor : undefined; if (pulseTop !== undefined) cursor += PULSE_LANE;
-  const breathTop = breathValid.length ? cursor : undefined; if (breathTop !== undefined) cursor += BREATH_LANE;
   const bottom = cursor;
   const height = bottom + 6;
   const plotX1 = width - PAD_R;
@@ -216,20 +213,20 @@ function TimelineChart({ timeline, journeys, selected, onSelect, width }: { time
   </>;
 
   /** A reliable-readings line fitted inside its lane, with its top and bottom values as gridlines. */
-  const signal = (metric: 'pulse' | 'breathing', valid: typeof pulseValid, laneTop: number, laneH: number) => {
+  const signal = (valid: typeof pulseValid, laneTop: number, laneH: number) => {
     const top = laneTop + PLOT_PAD; const bandH = laneH - PLOT_PAD * 2;
     const values = valid.map((sample) => sample.value);
     let low = Math.floor(Math.min(...values)); let high = Math.ceil(Math.max(...values));
-    const span = metric === 'pulse' ? 10 : 4; if (high - low < span) { const mid = (high + low) / 2; low = Math.floor(mid - span / 2); high = Math.ceil(mid + span / 2); }
+    const span = 10; if (high - low < span) { const mid = (high + low) / 2; low = Math.floor(mid - span / 2); high = Math.ceil(mid + span / 2); }
     const y = (value: number) => top + bandH - ((value - low) / (high - low)) * bandH;
     return <g className="tl-signal">
       <line className="tl-rowline" x1={0} x2={width} y1={laneTop} y2={laneTop} />
-      {laneLabel(laneTop, laneH, metric === 'pulse' ? 'Pulse' : 'Breathing', metric === 'pulse' ? 'beats per min' : 'breaths per min')}
-      {[high, low].map((value) => <g key={`${metric}${value}`}>
+      {laneLabel(laneTop, laneH, 'Pulse', 'beats per min')}
+      {[high, low].map((value) => <g key={value}>
         <line className="tl-grid" x1={PAD_L} x2={plotX1} y1={y(value)} y2={y(value)} />
         <text className="tl-tick" x={PAD_L - 8} y={y(value) + 4} textAnchor="end">{value}</text>
       </g>)}
-      <path className={metric === 'pulse' ? 'tl-pulse' : 'tl-breath'} d={linePath(valid.map((sample) => ({ x: x(sample.t), y: y(sample.value), t: sample.t })))} />
+      <path className="tl-pulse" d={linePath(valid.map((sample) => ({ x: x(sample.t), y: y(sample.value), t: sample.t })))} />
     </g>;
   };
 
@@ -292,8 +289,7 @@ function TimelineChart({ timeline, journeys, selected, onSelect, width }: { time
     </>}
 
     {/* reliable camera readings only */}
-    {pulseTop !== undefined && signal('pulse', pulseValid, pulseTop, PULSE_LANE)}
-    {breathTop !== undefined && signal('breathing', breathValid, breathTop, BREATH_LANE)}
+    {pulseTop !== undefined && signal(pulseValid, pulseTop, PULSE_LANE)}
 
     <line className="tl-axis" x1={0} x2={width} y1={bottom} y2={bottom} />
   </svg>;
@@ -304,10 +300,7 @@ function chartNotes(timeline: SessionTimeline): string[] {
   const notes: string[] = [];
   if (!timeline.items.some((item) => item.type === 'conversation')) notes.push('No conversation with Alex was recorded.');
   if (timeline.windows.length) {
-    const pulse = timeline.samples.pulse.some((sample) => sample.valid); const breathing = timeline.samples.breathing.some((sample) => sample.valid);
-    if (!pulse && !breathing) notes.push('The camera was on, but no pulse or breathing reading was reliable enough to plot.');
-    else if (!pulse) notes.push('No pulse reading was reliable enough to plot.');
-    else if (!breathing) notes.push('No breathing reading was reliable enough to plot.');
+    if (!timeline.samples.pulse.some((sample) => sample.valid)) notes.push('The camera was on, but no pulse reading was reliable enough to plot.');
   }
   return notes;
 }
@@ -401,7 +394,7 @@ export function ReadinessInsights({ session, beforeConcepts }: { session: Practi
   const answersTimed = timeline.answers.length > 0;
   const simulated = timeline.simulated; const mock = session.providerMode === 'mock';
   const talked = timeline.items.some((item) => item.type === 'conversation');
-  const readings = [...timeline.samples.pulse, ...timeline.samples.breathing].some((sample) => sample.valid);
+  const readings = timeline.samples.pulse.some((sample) => sample.valid);
   const notes = chartNotes(timeline);
 
   return <section className="insights" aria-label="Readiness insights">
