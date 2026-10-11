@@ -32,6 +32,13 @@ function isFatal(error: unknown) {
   return error instanceof PracticeApiError && Boolean(error.code && FATAL_API_CODES.has(error.code));
 }
 const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
+/** Longest wait for the face tracker's model before frame capture starts anyway. */
+const TRACKER_LOAD_WAIT_MS = 8000;
+/**
+ * The same server-side Presage failure this many times in a row, with no reading in between, means
+ * restarting will not help (e.g. a server without the GPU support Presage needs). Retries stop there.
+ */
+const MAX_REPEATED_SERVER_FAILURES = 3;
 
 interface Loop {
   capture?: FrameCapture;
@@ -76,7 +83,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
   const live = useRef<{ sessionId?: string; windowId?: string; stream?: MediaStream }>({});
   /** What the learner turned on. While set, failures restart Presage instead of ending it. */
   const intent = useRef<{ sessionId: string; purpose: MonitoringPurpose; checkinEndsAt?: number }>(undefined);
-  const retry = useRef<{ attempt: number; timer?: ReturnType<typeof setTimeout>; onVisible?: () => void }>({ attempt: 0 });
+  const retry = useRef<{ attempt: number; timer?: ReturnType<typeof setTimeout>; onVisible?: () => void; serverFailure?: { reason: string; count: number } }>({ attempt: 0 });
   const beginRef = useRef<(sessionId: string, purpose: MonitoringPurpose, checkinSeconds?: number) => Promise<void>>(undefined);
   const location = useLocation();
 
@@ -162,14 +169,22 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
     current.failures = 0; current.lastStatus = status;
     if (status.window.status !== 'active') {
       // The server ended the window without the learner asking: start a new one unless retrying cannot help.
-      if (intent.current && !status.window.fatal) { recover(status.window.endReason ?? 'Presage stopped.'); return; }
+      const reason = status.window.endReason ?? 'Presage stopped.';
+      if (status.window.status === 'error' && !status.window.samples.some((sample) => sample.valid)) {
+        const previous = retry.current.serverFailure;
+        retry.current.serverFailure = { reason, count: previous?.reason === reason ? previous.count + 1 : 1 };
+      }
+      if (intent.current && (retry.current.serverFailure?.count ?? 0) >= MAX_REPEATED_SERVER_FAILURES) {
+        fail(sessionId, `${reason.replace(/\.$/, '')}, ${MAX_REPEATED_SERVER_FAILURES} times in a row, so Presage stopped retrying. The server may not support it right now; your study session continues normally.`); return;
+      }
+      if (intent.current && !status.window.fatal) { recover(reason); return; }
       if (status.window.fatal) { intent.current = undefined; retry.current.attempt = 0; }
       release(); live.current = {}; finish(status, sessionId, status.window.status === 'error' ? status.window.endReason ?? 'Presage stopped.' : undefined); return;
     }
     const valid = status.window.samples.some((sample) => sample.valid);
-    if (valid) retry.current.attempt = 0;
+    if (valid) { retry.current.attempt = 0; retry.current.serverFailure = undefined; }
     setState((previous) => previous.windowId === windowId ? { ...previous, status, phase: valid ? 'monitoring' : 'calibrating' } : previous);
-  }, [finish, recover, release]);
+  }, [fail, finish, recover, release]);
 
   /** Sends queued frames in capture order, one request at a time, as soon as the last one returns. */
   const pump = useCallback((sessionId: string, windowId: string) => {
@@ -185,18 +200,19 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       }).finally(() => { current.inFlight = false; pump(sessionId, windowId); });
   }, [applyStatus, recover, sendFrames]);
 
-  /** Starts the local face tracker on the hidden video and publishes a summary a few times a second. */
+  /** Starts the local face tracker on the hidden video and publishes a summary a few times a second. Resolves once its model has loaded (or failed to). */
   const startTracking = useCallback((video: HTMLVideoElement) => {
     const current = loop.current;
     const tracker = new FaceTrackLoop(video);
     current.tracker = tracker;
     setTracking(tracker.store);
-    void tracker.start();
+    const ready = tracker.start();
     current.summary = setInterval(() => {
       if (current.cancelled) return;
       const summary = tracker.store.summary(performance.now());
       setState((previous) => sameSummary(previous.tracking, summary) ? previous : { ...previous, tracking: summary });
     }, 500);
+    return ready;
   }, []);
 
   /** Opens the camera and a hidden <video> that keeps frames flowing for capture and tracking. */
@@ -298,6 +314,10 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       }
       let configIndex = CAMERA_LADDER.findIndex((config) => config.label === choice!.config.label);
       await applyConfig(track, choice.config);
+      // The face tracker loads its model first. Loading blocks the page for a second or two, and if that
+      // happened during capture, Presage would see a gap of over 2 s between frames and stop the window.
+      await Promise.race([startTracking(video), new Promise((resolve) => setTimeout(resolve, TRACKER_LOAD_WAIT_MS))]);
+      if (current.cancelled) return;
 
       const windowId = await startMonitoring(sessionId, purpose);
       if (current.cancelled) return;
@@ -316,8 +336,6 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
       capture.encoding = step.encoding;
       current.capture = capture;
       try { capture.start(); } catch (error) { throw new StartError(errorMessage(error, 'This browser cannot read camera frames.'), true); }
-      // Started only now: the face box must not compete with the camera-rate probe or with frame capture.
-      startTracking(video);
 
       const controller = new RecoveryController();
       let lastDrops = 0; let lastTotal = -1; let progressAt = Date.now();
@@ -364,7 +382,7 @@ export function MonitoringProvider({ children }: { children: ReactNode }) {
   const start = useCallback(async (sessionId: string, purpose: MonitoringPurpose, checkinSeconds?: number) => {
     if (live.current.windowId || intent.current) await stop();
     intent.current = { sessionId, purpose, checkinEndsAt: checkinSeconds ? Date.now() + checkinSeconds * 1000 : undefined };
-    retry.current.attempt = 0;
+    retry.current.attempt = 0; retry.current.serverFailure = undefined;
     await begin(sessionId, purpose, checkinSeconds);
   }, [begin, stop]);
 

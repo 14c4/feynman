@@ -36,6 +36,10 @@ export class FrameCapture {
   private reader?: ReadableStreamDefaultReader<VideoFrame>;
   private clone?: MediaStreamTrack;
   private handle?: number;
+  /** JPEG worker; null when the browser cannot run one (main-thread encoding is the fallback). */
+  private worker?: Worker | null;
+  private nextJob = 0;
+  private readonly jobs = new Map<number, { timestampUs: number; width: number; height: number }>();
 
   constructor(private readonly track: MediaStreamTrack, private readonly video: HTMLVideoElement, public longSide: number, private readonly onFrame: (frame: CapturedFrame) => void) {
     this.canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(1, 1) : document.createElement('canvas');
@@ -72,6 +76,45 @@ export class FrameCapture {
     this.clone?.stop();
     const video = this.video as FrameCallbackVideo;
     if (this.handle !== undefined) video.cancelVideoFrameCallback?.(this.handle);
+    this.worker?.terminate(); this.worker = undefined; this.jobs.clear();
+  }
+
+  /**
+   * Hands a frame to the JPEG worker. Returns false when no worker can be used, so the caller
+   * encodes on the main thread instead. On the main thread, canvas JPEG encoding competes with the
+   * face tracker and falls to a few fps (measured: 2.7 fps), which makes Presage reject the stream.
+   */
+  private encodeInWorker(source: CanvasImageSource, width: number, height: number, timestampUs: number) {
+    const worker = this.encoderWorker();
+    if (!worker) return false;
+    if (this.pending >= MAX_PENDING_ENCODES) { this.encoderDrops++; return true; }
+    let frame: VideoFrame;
+    try { frame = source instanceof VideoFrame ? source.clone() : new VideoFrame(source, { timestamp: Math.round(timestampUs) }); } catch { return false; }
+    const id = ++this.nextJob;
+    this.jobs.set(id, { timestampUs, width, height }); this.pending++;
+    worker.postMessage({ id, frame, width, height, quality: JPEG_QUALITY }, [frame]);
+    return true;
+  }
+
+  private encoderWorker() {
+    if (this.worker !== undefined) return this.worker;
+    try {
+      if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined' || typeof VideoFrame === 'undefined') throw new Error('unsupported');
+      const worker = new Worker(new URL('./jpegEncoder.worker.ts', import.meta.url), { type: 'module' });
+      worker.onmessage = (event: MessageEvent<{ id: number; buffer?: ArrayBuffer }>) => {
+        const job = this.jobs.get(event.data.id);
+        if (!job) return;
+        this.jobs.delete(event.data.id); this.pending--;
+        if (!this.active) return;
+        if (!event.data.buffer) { this.encoderDrops++; return; }
+        this.processed.push(job.timestampUs / 1000);
+        this.onFrame({ timestampUs: job.timestampUs, width: job.width, height: job.height, encoding: 'jpeg', bytes: new Uint8Array(event.data.buffer) });
+      };
+      // If the worker fails, frames it held are lost (counted) and encoding continues on the main thread.
+      worker.onerror = () => { worker.terminate(); this.worker = null; this.encoderDrops += this.jobs.size; this.pending -= this.jobs.size; this.jobs.clear(); };
+      this.worker = worker;
+    } catch { this.worker = null; }
+    return this.worker;
   }
 
   private async readLoop() {
@@ -95,6 +138,7 @@ export class FrameCapture {
     if (timestampUs <= this.lastUs) { this.duplicates++; return; }
     this.lastUs = timestampUs;
     const { width, height } = processingSize(sourceWidth, sourceHeight, this.longSide);
+    if (this.encoding === 'jpeg' && this.encodeInWorker(source, width, height, timestampUs)) return;
     if (this.canvas.width !== width || this.canvas.height !== height) { this.canvas.width = width; this.canvas.height = height; }
     this.context.drawImage(source, 0, 0, sourceWidth, sourceHeight, 0, 0, width, height);
     if (this.encoding === 'rgb') {

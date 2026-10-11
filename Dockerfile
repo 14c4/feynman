@@ -16,7 +16,10 @@ WORKDIR /app
 # The Presage SmartSpectra native runtime verifies the API key over HTTPS using the system CA store.
 # The slim image has none (Node bundles its own CAs, the native library does not), so without this
 # every Presage window fails with "Usage verification failed. Status code: 0" / a network error.
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+# Presage's pulse model needs Vulkan. Hosts like Railway have no GPU, so without a driver every
+# window fails with "Vulkan is not available" and then "SmartSpectra processing failed" (no pulse,
+# ever). mesa-vulkan-drivers provides lavapipe, a CPU Vulkan implementation, as the fallback.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libvulkan1 mesa-vulkan-drivers && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production HOST=0.0.0.0
 COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules
