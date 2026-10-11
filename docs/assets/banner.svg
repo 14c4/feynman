@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="420" viewBox="0 0 1280 420" role="img" aria-labelledby="title desc">
+  <title id="title">feynman.ai</title>
+  <desc id="desc">Learn by explaining. Prepare with confidence. Alex, an AI classmate, asks a question while you teach.</desc>
+  <defs>
+    <clipPath id="card"><rect width="1280" height="420" rx="28"/></clipPath>
+    <radialGradient id="glow-green" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#d3e0d5" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#d3e0d5" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow-amber" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ecd9b4" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#ecd9b4" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-20%" y="-30%" width="140%" height="180%">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#18201b" flood-opacity="0.07"/>
+    </filter>
+  </defs>
+
+  <g clip-path="url(#card)">
+    <rect width="1280" height="420" fill="#fafaf5"/>
+    <ellipse cx="230" cy="90" rx="380" ry="260" fill="url(#glow-green)"/>
+    <ellipse cx="1130" cy="330" rx="340" ry="240" fill="url(#glow-amber)"/>
+    <g stroke="#e5e7df" stroke-width="1">
+      <path d="M320 0v420M640 0v420M960 0v420"/>
+    </g>
+    <g stroke="#aac4b1" stroke-width="1" stroke-linecap="round">
+      <path d="M314 210h12M320 204v12M634 210h12M640 204v12M954 210h12M960 204v12"/>
+    </g>
+  </g>
+  <rect x="0.5" y="0.5" width="1279" height="419" rx="27.5" fill="none" stroke="#e5e7df"/>
+
+  <!-- Brand -->
+  <g transform="translate(80 72)">
+    <rect width="52" height="52" rx="15" fill="#1a3227"/>
+    <rect y="-3" width="52" height="52" rx="15" fill="#203e30"/>
+    <text x="26" y="38" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-style="italic" font-size="37" fill="#ffffff" stroke="#ffffff" stroke-width="0.5">f</text>
+    <text x="68" y="35" font-family="Geist, Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="28" font-weight="600" letter-spacing="-0.6" fill="#141a16">feynman<tspan fill="#3f7658" font-weight="500">.ai</tspan></text>
+  </g>
+
+  <!-- Headline -->
+  <g font-family="Geist, Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+    <text x="78" y="226" font-size="60" font-weight="600" letter-spacing="-2.2" fill="#141a16">Learn by explaining.</text>
+    <text x="78" y="294" font-size="60" font-weight="600" letter-spacing="-2.2" fill="#33644a">Prepare with confidence.</text>
+    <text x="80" y="348" font-size="20" fill="#646d65">Teach a topic to Alex, an AI classmate, and find out what you really know.</text>
+  </g>
+
+  <!-- Alex's question -->
+  <g filter="url(#shadow)">
+    <rect x="884" y="58" width="300" height="76" rx="16" fill="#ffffff" stroke="#e5e7df"/>
+  </g>
+  <text x="904" y="86" font-family="'Geist Mono', ui-monospace, Consolas, monospace" font-size="12" letter-spacing="1.4" fill="#646d65">ALEX</text>
+  <text x="904" y="114" font-family="Geist, Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="18" fill="#252d28">But why does it need light?</text>
+
+  <!-- Alex -->
+  <g transform="translate(1040 250)">
+    <circle r="86" fill="none" stroke="#3f7658" stroke-opacity="0.12" stroke-width="10"/>
+    <circle r="80" fill="none" stroke="#33644a" stroke-width="1.2"/>
+    <circle r="66" fill="#d9e9de" stroke="#d6e5da"/>
+    <g transform="translate(-46.5 -46.5) scale(0.93)">
+      <circle cx="50" cy="50" r="46" fill="#203e30"/>
+      <path d="M43 6c3-5 10-6 14-2-4 0-6 2-7 5" fill="none" stroke="#203e30" stroke-width="4" stroke-linecap="round"/>
+      <rect x="31" y="40" width="9" height="13" rx="4.5" fill="#eef5ef"/>
+      <rect x="60" y="40" width="9" height="13" rx="4.5" fill="#eef5ef"/>
+      <ellipse cx="50" cy="67" rx="6" ry="4.5" fill="#eef5ef"/>
+    </g>
+  </g>
+
+  <!-- Score chip -->
+  <g filter="url(#shadow)">
+    <rect x="1084" y="326" width="176" height="56" rx="14" fill="#ffffff" stroke="#e5e7df"/>
+  </g>
+  <circle cx="1112" cy="354" r="12" fill="none" stroke="#e7eee7" stroke-width="4"/>
+  <circle cx="1112" cy="354" r="12" fill="none" stroke="#33644a" stroke-width="4" stroke-linecap="round" transform="rotate(-90 1112 354)"/>
+  <text x="1136" y="348" font-family="'Geist Mono', ui-monospace, Consolas, monospace" font-size="10.5" letter-spacing="1.2" fill="#646d65">RECHECK</text>
+  <text x="1136" y="370" font-family="Geist, Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#141a16">3<tspan fill="#8b948c" font-size="13" font-weight="400">/3</tspan></text>
+  <rect x="1212" y="342" width="34" height="22" rx="11" fill="#e6efe7"/>
+  <text x="1229" y="358" text-anchor="middle" font-family="'Geist Mono', ui-monospace, Consolas, monospace" font-size="12" fill="#284f3b">+2</text>
+</svg>
