@@ -315,5 +315,5 @@ The Presage SDK includes native runtimes for macOS (Apple Silicon), Linux x64/ar
 
 <p align="center">
   <img src="public/favicon.svg" width="36" alt="feynman.ai logo"><br>
-  <sub><b>feynman.ai</b> · Learn by explaining. Prepare with confidence.</sub>
+  <sub><b>feynman.ai</b> · Learn by explaining.</sub>
 </p>
