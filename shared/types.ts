@@ -339,6 +339,16 @@ export interface SessionAccess {
   token: string;
 }
 
+/** A saved session in a signed-in learner's list. */
+export interface SessionSummary {
+  id: string;
+  title: string;
+  stage: PracticeStage;
+  lifecycle: PracticeLifecycle;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CreatePracticeInput {
   topic?: string;
   /** Optional when study material or notes are provided. */
@@ -374,6 +384,8 @@ export interface IntegrationHealth {
   voiceConfigured: boolean;
   providerMode?: 'real' | 'mock';
   physiology?: PhysiologyHealth;
+  /** True when the server can save signed-in learners' sessions. Sign-in is hidden otherwise. */
+  accountsEnabled?: boolean;
 }
 
 /** Live status returned while frames stream to the server. */

@@ -1,0 +1,18 @@
+/* Sign in / create account. */
+.account { max-width: 960px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 420px); gap: var(--s-16); align-items: center; padding-top: var(--s-8); }
+.account--signed-in { display: grid; grid-template-columns: 1fr; max-width: 560px; justify-items: start; gap: var(--s-3); }
+.account h1 { font-size: clamp(2.25rem, 1.6rem + 2.4vw, 3.5rem); line-height: 1.02; letter-spacing: var(--display-tracking); margin: 0 0 var(--s-4); }
+.account-lede { max-width: 46ch; margin: 0 0 var(--s-5); font-size: var(--text-lg); color: var(--muted); }
+.account-points { display: grid; gap: var(--s-3); }
+.account-points li { display: flex; align-items: center; gap: var(--s-3); font-size: var(--text-md); color: var(--text); }
+.account-points svg { color: var(--accent); }
+.account-card { display: grid; gap: var(--s-5); padding: var(--s-8); box-shadow: var(--shadow-lg); }
+.account-card .segmented { justify-self: stretch; display: grid; grid-template-columns: 1fr 1fr; }
+.account-card .segmented button { justify-content: center; }
+.account-card .button { width: 100%; }
+.account-foot { margin: 0; text-align: center; }
+
+@media (max-width: 800px) {
+  .account { grid-template-columns: 1fr; gap: var(--s-8); padding-top: 0; }
+  .account-card { padding: var(--s-5); }
+}

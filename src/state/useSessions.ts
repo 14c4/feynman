@@ -9,6 +9,8 @@ export interface SessionContextValue extends SessionState {
   saveDraft: (id: string) => Promise<void>;
   createSession: (input: CreatePracticeInput) => Promise<string>;
   loadSession: (id: string) => Promise<void>;
+  /** Reopens a saved session for its signed-in owner, even from a new browser. */
+  resumeSession: (id: string) => Promise<void>;
   /** `suggestion` answers a suggested rewrite: 'accept' adopts it, 'decline' prepares from the original wording. */
   prepareSession: (id: string, clarification?: string, suggestion?: 'accept' | 'decline') => Promise<void>;
   updateDraft: (id: string, attemptId: string, answer: AssessmentAnswer, questionIndex?: number) => void;

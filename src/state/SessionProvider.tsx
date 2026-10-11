@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode } from 'react';
 import type { AssessmentAnswer, CreatePracticeInput, FrameEncoding, IntegrationHealth, MonitoringPurpose, NervousnessValue, PracticeSession, UpdatePracticeInput } from '../../shared/types';
-import { loadIntegrationHealth, PracticeApiError, practiceApi } from '../services/practiceApi';
+import { loadIntegrationHealth, PracticeApiError, practiceApi, resumeSavedSession } from '../services/practiceApi';
+import { accessToken } from '../services/supabase';
 import { SessionContext } from './useSessions';
 import { initialSessionState, sessionReducer, type SessionAction, type SessionState } from './sessionReducer';
 
@@ -69,7 +70,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       throw error;
     }
   }, [receive, tokenFor]);
-  const loadSession = useCallback((id: string) => run(id, async () => receive(await practiceApi.load(id, tokenFor(id)))), [receive, run, tokenFor]);
+  // Reopens one of the signed-in learner's saved sessions in this browser (the server reissues its access token).
+  const resumeSession = useCallback(async (id: string) => {
+    const access = await resumeSavedSession(id);
+    tokens.current[id] = access.token;
+    receive(access.session);
+  }, [receive]);
+  const loadSession = useCallback((id: string) => run(id, async () => {
+    // A reload or a new browser has no token for a saved session; a signed-in owner can get one back.
+    if (!tokens.current[id] && await accessToken()) { await resumeSession(id); return; }
+    receive(await practiceApi.load(id, tokenFor(id)));
+  }), [receive, resumeSession, run, tokenFor]);
   const action = useCallback((id: string, name: 'prepare' | 'submit' | 'recheck' | 'teach' | 'cycles' | 'finish', input?: Record<string, string | boolean>) => {
     const key = `${id}:${name}`;
     const pending = pendingActions.current[key];
@@ -155,7 +166,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     window.addEventListener('beforeunload', warnUnsaved);
     return () => { window.removeEventListener('beforeunload', warnUnsaved); Object.values(activeTimers).forEach(clearTimeout); };
   }, []);
-  return <SessionContext.Provider value={{ ...state, providerMode, integration, draftStatus, saveDraft, createSession, loadSession, prepareSession, updateDraft,
+  return <SessionContext.Provider value={{ ...state, providerMode, integration, draftStatus, saveDraft, createSession, loadSession, resumeSession, prepareSession, updateDraft,
     submitAssessment, startRecheck, returnToTeaching, practiceAgain, finishSession, setNervousness,
     requestVoice, generateReview, registerConversation, finalizeConversation, startTextConversation, sendTextMessage, startAttempt, startMonitoring, sendFrames, stopMonitoring }}>{children}</SessionContext.Provider>;
 }

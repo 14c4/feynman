@@ -1,7 +1,8 @@
 import { useEffect } from 'react';
-import { Link, Outlet, useLocation } from 'react-router';
+import { Link, Outlet, useLocation, useNavigate } from 'react-router';
 import { PracticeIcon } from './practice/PracticeIcon';
 import { useSessions } from '../state/useSessions';
+import { useAuth } from '../state/useAuth';
 import { StudyStepper } from './StudyStepper';
 import './layout.css';
 
@@ -12,6 +13,16 @@ function Brand() {
 function ModeBadge({ mode }: { mode?: 'real' | 'mock' }) {
   if (mode === 'mock') return <span className="badge badge--warning badge--mono" title="Development mock provider: deterministic test questions and grades">DEV MOCK</span>;
   return null;
+}
+
+/** Sign in for guests; email and sign out for signed-in learners. Hidden when accounts aren't set up. */
+function AccountMenu() {
+  const { user, available, loading, signOut } = useAuth();
+  const navigate = useNavigate();
+  if (!available || loading) return null;
+  if (!user) return <Link to="/account" className="button button--secondary button--sm">Sign in</Link>;
+  return <div className="account-chip"><span className="account-email" title={user.email}>{user.email}</span>
+    <button type="button" className="button button--quiet button--sm" onClick={() => void signOut().then(() => navigate('/'))}>Sign out</button></div>;
 }
 
 export function AppLayout() {
@@ -48,7 +59,7 @@ export function AppLayout() {
 
   return <div className="shell">
     <a className="skip-link" href="#main">Skip to content</a>
-    <header className="topbar"><Brand /><ModeBadge mode={mode} /></header>
+    <header className="topbar"><Brand /><div className="topbar-end"><ModeBadge mode={mode} /><AccountMenu /></div></header>
     {mockBar}
     <main id="main" className="page"><Outlet /></main>
   </div>;

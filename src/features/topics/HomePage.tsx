@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { useSessions } from '../../state/useSessions';
 import { StudyComposer } from './StudyComposer';
+import { SavedSessions } from './SavedSessions';
 import { MATERIAL_LIMITS, type MaterialUpload } from '../../../shared/types';
 import './home.css';
 
@@ -74,5 +75,7 @@ export function HomePage() {
       onDescription={(value) => { setDescription(value); setError(''); }}
       onFiles={addFiles} onRemoveFile={(index) => setFiles((current) => current.filter((_, position) => position !== index))}
       onSubmit={(event) => void start(event)} />
+
+    <SavedSessions />
   </div>;
 }

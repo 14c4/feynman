@@ -1,5 +1,6 @@
-import type { IntegrationHealth, MonitoringStatus, PracticeSession, SessionAccess, VoiceCredentials } from '../../shared/types';
+import type { IntegrationHealth, MonitoringStatus, PracticeSession, SessionAccess, SessionSummary, VoiceCredentials } from '../../shared/types';
 import type { PracticeService } from './contracts/practice';
+import { accessToken } from './supabase';
 
 export class PracticeApiError extends Error {
   constructor(message: string, readonly session?: PracticeSession, readonly status?: number) { super(message); }
@@ -7,10 +8,11 @@ export class PracticeApiError extends Error {
 
 async function request<T>(path: string, method: string, token?: string, input?: unknown): Promise<T> {
   let response: Response;
+  const user = await accessToken();
   try {
     const binary = input instanceof Uint8Array;
     response = await fetch(`/api${path}`, {
-      method, headers: { 'Content-Type': binary ? 'application/octet-stream' : 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      method, headers: { 'Content-Type': binary ? 'application/octet-stream' : 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(user ? { 'X-User-Token': user } : {}) },
       body: input === undefined ? undefined : binary ? input as Uint8Array<ArrayBuffer> : JSON.stringify(input), signal: AbortSignal.timeout(binary ? 15_000 : 100_000),
     });
   } catch { throw new PracticeApiError('The server could not be reached. Your local drafts are kept; reconnect and try again.'); }
@@ -25,6 +27,9 @@ async function request<T>(path: string, method: string, token?: string, input?: 
 
 const path = (id: string) => `/sessions/${encodeURIComponent(id)}`;
 export const loadIntegrationHealth = () => request<IntegrationHealth>('/health', 'GET');
+/** Saved sessions for the signed-in learner (the account token is attached automatically). */
+export const listMySessions = () => request<{ sessions: SessionSummary[] }>('/me/sessions', 'GET').then((result) => result.sessions);
+export const resumeSavedSession = (id: string) => request<SessionAccess>(`${path(id)}/reopen`, 'POST', undefined, {});
 export const practiceApi: PracticeService = {
   create: (input) => request<SessionAccess>('/sessions', 'POST', undefined, input),
   load: (id, token) => request<PracticeSession>(path(id), 'GET', token),

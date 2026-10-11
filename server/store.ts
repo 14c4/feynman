@@ -5,6 +5,8 @@ import type { PrivateMaterial } from './materials.js';
 export interface StoredRecord {
   session: PracticeSession;
   tokenHash: string;
+  /** Supabase user who owns the session. Absent for guest sessions, which are never persisted. */
+  userId?: string;
   blueprint: PrivateBlueprint | null;
   conversationOwners: Record<string, string>;
   /** Extracted upload text; never serialized to the client. */

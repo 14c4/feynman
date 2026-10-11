@@ -11,8 +11,9 @@ import { alexContext, openingQuestion, voiceFocusContext } from './alex.js';
 import { MonitoringService } from './physiology.js';
 import { bucketFor, clientAddress, positiveInteger, RateLimiter, rateLimitEnabled } from './protection.js';
 import { buildReviewSheet, reviewFingerprint, reviewInput } from './review.js';
+import { createAccounts, type Accounts } from './accounts.js';
 
-interface HandlerOptions { store?: SessionStore; providers?: Providers; env?: NodeJS.ProcessEnv; monitoring?: MonitoringService; /** Minimum gap between ElevenLabs transcript checks per conversation. */ transcriptIntervalMs?: number; /** Per-client limits; defaults to on in production (see protection.ts). Pass null to disable. */ limiter?: RateLimiter | null }
+interface HandlerOptions { /** Overrides the Supabase-backed account store (tests). */ accounts?: Accounts; store?: SessionStore; providers?: Providers; env?: NodeJS.ProcessEnv; monitoring?: MonitoringService; /** Minimum gap between ElevenLabs transcript checks per conversation. */ transcriptIntervalMs?: number; /** Per-client limits; defaults to on in production (see protection.ts). Pass null to disable. */ limiter?: RateLimiter | null }
 const now = () => new Date().toISOString();
 const hash = (token: string) => createHash('sha256').update(token).digest('hex');
 const safeEqual = (a: string, b: string) => { const left = Buffer.from(a); const right = Buffer.from(b); return left.length === right.length && timingSafeEqual(left, right); };
@@ -44,7 +45,12 @@ export function createPracticeHandler(options: HandlerOptions = {}) {
   const providers = options.providers ?? createProviders(env);
   if (providers.mode === 'mock') assertDevelopmentMode(env);
   const monitoring = options.monitoring ?? new MonitoringService({ env, maxActive: positiveInteger(env.MAX_MONITORING_WINDOWS, 4) });
-  const store = options.store ?? new MemorySessionStore({ maxSessions: positiveInteger(env.MAX_SESSIONS, 500), idleTtlMs: positiveInteger(env.SESSION_TTL_HOURS, 24) * 3_600_000, onEvict: (id) => monitoring.delete(id) });
+  const memory = new MemorySessionStore({ maxSessions: positiveInteger(env.MAX_SESSIONS, 500), idleTtlMs: positiveInteger(env.SESSION_TTL_HOURS, 24) * 3_600_000, onEvict: (id) => monitoring.delete(id) });
+  // Accounts are optional and only wired up for the default store, so tests and guests are unaffected.
+  const accounts = options.store ? undefined : options.accounts ?? createAccounts(env, memory);
+  const store = options.store ?? accounts?.store ?? memory;
+  /** The signed-in user for this request, if the browser sent a valid Supabase access token. */
+  const userOf = async (req: IncomingMessage) => { const header = req.headers['x-user-token']; return accounts?.verify(typeof header === 'string' ? header : undefined); };
   const limiter = options.limiter === undefined ? (rateLimitEnabled(env) ? new RateLimiter() : null) : options.limiter;
   const trustProxy = env.TRUST_PROXY === 'true' || env.TRUST_PROXY === '1';
   const transcriptIntervalMs = options.transcriptIntervalMs ?? 2500;
@@ -116,12 +122,17 @@ export function createPracticeHandler(options: HandlerOptions = {}) {
         json(res, 200, { providerMode: providers.mode ?? 'real', ...(providers.usage?.snapshot() ?? { note: 'DEV MOCK: no provider requests are made.' }) }); return;
       }
       if (req.method === 'GET' && path === '/api/health') {
-        const health: IntegrationHealth = { status: 'ok', service: 'feynman.ai', providerMode: providers.mode ?? 'real', geminiConfigured: providers.mode !== 'mock' && Boolean(env.GEMINI_API_KEY), voiceConfigured: providers.mode !== 'mock' && Boolean(env.ELEVENLABS_API_KEY && env.ELEVENLABS_AGENT_ID), physiology: await monitoring.health() }; json(res, 200, health); return;
+        const health: IntegrationHealth = { status: 'ok', service: 'feynman.ai', providerMode: providers.mode ?? 'real', geminiConfigured: providers.mode !== 'mock' && Boolean(env.GEMINI_API_KEY), voiceConfigured: providers.mode !== 'mock' && Boolean(env.ELEVENLABS_API_KEY && env.ELEVENLABS_AGENT_ID), physiology: await monitoring.health(), accountsEnabled: Boolean(accounts) }; json(res, 200, health); return;
       }
       // Camera frames are binary; every other request body is JSON.
       const framesRequest = req.method === 'POST' && /^\/api\/sessions\/[0-9a-f-]{36}\/monitoring\/[0-9a-f-]{36}\/frames$/i.test(path);
       const frames = framesRequest ? await readRaw(req, MONITORING_LIMITS.maxBatchBytes) : undefined;
       const body = req.method === 'GET' || framesRequest ? {} : await readBody(req, req.method === 'POST' && path === '/api/sessions' ? 12_000_000 : 100_000);
+      if (req.method === 'GET' && path === '/api/me/sessions') {
+        const userId = await userOf(req);
+        if (!accounts || !userId) { json(res, 401, { error: { code: 'UNAUTHORIZED', message: 'Sign in to see your saved sessions.' } }); return; }
+        json(res, 200, { sessions: await accounts.list(userId) }); return;
+      }
       if (req.method === 'POST' && path === '/api/sessions') {
         const description = body.description; const notes = body.notes ?? ''; const topic = body.topic ?? '';
         // The description is optional: study material or notes are enough to start.
@@ -133,7 +144,7 @@ export function createPracticeHandler(options: HandlerOptions = {}) {
         const token = randomBytes(32).toString('base64url'); const timestamp = now(); const id = randomUUID();
         const cycle: PracticeCycle = { id: randomUUID(), number: 1, focusConceptIds: [], conversations: [], createdAt: timestamp };
         const session: PracticeSession = { id, events: [], providerMode: providers.mode ?? 'real', title: (topic.trim() || described.trim() || materials[0]?.meta.name.replace(/\.[^.]+$/, '') || 'Study session').slice(0, 100), description: described.trim(), notes, scope: '', materials: materials.map((item) => item.meta), concepts: [], blueprintVersion: 1, stage: 'preparing', lifecycle: 'active', preparation: { status: 'idle' }, attempts: [], cycles: [cycle], currentCycleId: cycle.id, createdAt: timestamp, updatedAt: timestamp };
-        const record: StoredRecord = { session, tokenHash: hash(token), blueprint: null, conversationOwners: {}, topic: topic.trim() || undefined, materials: materials.map(({ meta, text }) => ({ id: meta.id, name: meta.name, text })) };
+        const record: StoredRecord = { session, tokenHash: hash(token), userId: await userOf(req), blueprint: null, conversationOwners: {}, topic: topic.trim() || undefined, materials: materials.map(({ meta, text }) => ({ id: meta.id, name: meta.name, text })) };
         logEvent(session, 'session_created', {}, timestamp);
         await store.set(record); json(res, 201, { session: view(record), token }); return;
       }
@@ -141,6 +152,13 @@ export function createPracticeHandler(options: HandlerOptions = {}) {
       if (!match) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'This API endpoint does not exist.' } }); return; }
       const [, id, suffix] = match; const record = await store.get(id);
       if (!record) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Practice session not found.' } }); return; }
+      // A signed-in owner can reopen their saved session from any browser: the session token is reissued, which signs out any other tab holding the old one.
+      if (req.method === 'POST' && suffix === '/reopen') {
+        const userId = await userOf(req);
+        if (!userId || !record.userId || record.userId !== userId) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Practice session not found.' } }); return; }
+        const token = randomBytes(32).toString('base64url'); record.tokenHash = hash(token);
+        await store.set(record); json(res, 200, { session: view(record), token }); return;
+      }
       const auth = req.headers.authorization?.match(/^Bearer ([A-Za-z0-9_-]{20,})$/)?.[1];
       if (!auth || !safeEqual(record.tokenHash, hash(auth))) { json(res, 401, { error: { code: 'UNAUTHORIZED', message: 'A valid session access token is required.' } }); return; }
       responseRecord = record;
