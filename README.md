@@ -284,7 +284,7 @@ The tests run entirely on mock providers and never call a paid service.
 - [ ] Confidence trends across sessions
 - [ ] Extra practice rounds on weak concepts
 
-**Known limits:** guest sessions live in server memory and are cleared when the server restarts. Each session runs one practice round. In Firefox and Safari, camera capture pauses while the tab is in the background.
+**Known limits:** Presage and vital tracking is very finicky. Really long to calibrate and very sensitive to the slightest changes such as lighting, movement, and what's in frame. 
 
 ## Deployment
 
@@ -315,5 +315,5 @@ The Presage SDK includes native runtimes for macOS (Apple Silicon), Linux x64/ar
 
 <p align="center">
   <img src="public/favicon.svg" width="36" alt="feynman.ai logo"><br>
-  <sub><b>feynman.ai</b> · Learn by explaining. Prepare with confidence.</sub>
+  <sub><b>feynman.ai</b> · Learn by explaining.</sub>
 </p>
