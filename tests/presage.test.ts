@@ -3,7 +3,7 @@ import test from 'node:test';
 import jpeg from 'jpeg-js';
 import { packBatch, type EncodedFrame } from '../src/features/insights/cameraPipeline.js';
 import { coverMapping, framingFor, GHOST_HIDE_AFTER_MS, GHOST_SHOW_AFTER_MS, ghostVisible, presageStage, smoothBox, squareAround, type StageInput } from '../src/features/insights/faceGeometry.js';
-import { faceFromMetrics, hrvFromMetrics, MonitoringService, type PresageModule } from '../server/physiology.js';
+import { faceFromMetrics, hrvFromMetrics, isoAt, MonitoringService, type PresageModule } from '../server/physiology.js';
 
 test('the tracking square is square on screen, centred on the face, and steady against jitter', () => {
   const aspect = 4 / 3;
@@ -176,5 +176,21 @@ test('the GPU-only arterial pressure model is never requested', async () => {
   const service = new MonitoringService({ env: { NODE_ENV: 'test', PRESAGE_API_KEY: 'k' }, loadPresage: async () => module });
   await service.start('s', 'in_session');
   assert.deepEqual(FakeSdk.last!.options.requestedMetrics, [2, 15, 17], 'phasic-bp-inference needs Vulkan, which servers like Railway lack');
+  service.close();
+});
+
+test('odd Presage timestamps or a failing handler never crash the server', async () => {
+  assert.doesNotThrow(() => isoAt(1e20));
+  assert.ok(Number.isFinite(Date.parse(isoAt(Number.NaN))));
+  assert.doesNotThrow(() => hrvFromMetrics({ cardio: { hrv: [{ rmssd: 40, confidence: 70, timestamp: 1e30 }] } }));
+  let decoded: unknown = { cardio: { pulseRate: [{ value: 72, confidence: 80, stable: true, timestamp: 1e30 }], hrv: [{ rmssd: 40, confidence: 70, timestamp: 1e30 }] } };
+  const module: PresageModule = { SmartSpectraSDK: FakeSdk as unknown as PresageModule['SmartSpectraSDK'], decodeMetrics: () => decoded };
+  const service = new MonitoringService({ env: { NODE_ENV: 'test', PRESAGE_API_KEY: 'k' }, loadPresage: async () => module });
+  const window = await service.start('s', 'in_session');
+  const sdk = FakeSdk.last!;
+  assert.doesNotThrow(() => sdk.emit('metrics', Buffer.alloc(1)), 'out-of-range timestamps are handled');
+  decoded = { face: { landmarks: { not: 'an array' } }, cardio: { hrv: 'garbage' } };
+  assert.doesNotThrow(() => sdk.emit('metrics', Buffer.alloc(1)), 'malformed packets are handled');
+  assert.doesNotThrow(() => service.ingest('s', window.id, Buffer.from(packBatch([jpegFrame(Date.now() * 1000)])), 96, 72, 30, 'jpeg'));
   service.close();
 });

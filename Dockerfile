@@ -21,6 +21,10 @@ WORKDIR /app
 # ever). mesa-vulkan-drivers provides lavapipe, a CPU Vulkan implementation, as the fallback.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libvulkan1 mesa-vulkan-drivers && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production HOST=0.0.0.0
+# lavapipe sizes its worker pool from the host's CPU count, not the container's share, and every
+# worker holds its own memory. On a big shared host that alone can exceed the container's RAM limit
+# (Railway logged out-of-memory restarts as soon as pulse processing started). Keep the pool small.
+ENV LP_NUM_THREADS=2
 COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist

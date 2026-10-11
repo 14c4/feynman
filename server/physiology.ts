@@ -133,6 +133,15 @@ export function rollingFps(times: number[], now: number, windowMs = RATE_WINDOW_
   return span > 0 ? Math.round(((times.length - 1) * 1000 / span) * 10) / 10 : undefined;
 }
 
+/**
+ * ISO time for epoch milliseconds. Never throws: `new Date(x).toISOString()` throws a RangeError for
+ * out-of-range values, and inside an SDK callback that would crash the whole server.
+ */
+export function isoAt(ms: number): string {
+  const date = new Date(ms);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : new Date().toISOString();
+}
+
 const toNumber = (value: unknown): number => {
   if (typeof value === 'number') return value;
   if (typeof value === 'bigint') return Number(value);
@@ -193,7 +202,7 @@ export function faceFromMetrics(decoded: unknown, frameWidth?: number, frameHeig
   const sampled = points?.filter((_, index) => index % step < 1).map(([x, y]) => [Math.round(x * 1000) / 1000, Math.round(y * 1000) / 1000] as [number, number]);
   const stamp = toNumber(landmarks?.timestamp ?? blinkRows.at(-1)?.timestamp ?? talking?.timestamp);
   return {
-    at: new Date(Number.isFinite(stamp) && stamp > 0 ? stamp / 1000 : Date.now()).toISOString(),
+    at: isoAt(Number.isFinite(stamp) && stamp > 0 ? stamp / 1000 : Date.now()),
     box, points: sampled, stable: landmarks?.stable === true,
     blinking: blinkRows.length ? blinkRows.at(-1)!.detected === true : undefined,
     talking: talking ? talking.detected === true : undefined,
@@ -208,7 +217,7 @@ export function hrvFromMetrics(decoded: unknown): PresageLiveState['hrv'] {
   if (!row) return undefined;
   const rmssd = toNumber(row.rmssd); const confidence = toNumber(row.confidence) || 0; const stamp = toNumber(row.timestamp);
   if (!Number.isFinite(rmssd) || rmssd <= 0) return undefined;
-  return { rmssdMs: Math.round(rmssd), confidence: Math.round(confidence), valid: confidence >= HRV_MIN_CONFIDENCE && rmssd < 300, at: new Date(Number.isFinite(stamp) && stamp > 0 ? stamp / 1000 : Date.now()).toISOString() };
+  return { rmssdMs: Math.round(rmssd), confidence: Math.round(confidence), valid: confidence >= HRV_MIN_CONFIDENCE && rmssd < 300, at: isoAt(Number.isFinite(stamp) && stamp > 0 ? stamp / 1000 : Date.now()) };
 }
 
 /** Deterministic, obviously-synthetic values for development. Never used outside development/test. */
@@ -236,6 +245,7 @@ export class MonitoringService {
   private readonly maxActive?: number;
   /** SDK sessions still shutting down. SDK state is process-global: a new session must not start until these finish. */
   private readonly teardowns = new Set<Promise<void>>();
+  private memoryLoggedAt = 0;
 
   constructor(options: MonitoringOptions = {}) {
     this.env = options.env ?? process.env;
@@ -366,7 +376,13 @@ export class MonitoringService {
     const sdk = new sdkModule.SmartSpectraSDK({ apiKey: this.env.PRESAGE_API_KEY ?? '', requestedMetrics: [...new Set(requested)] });
     live.presage.decoder = sdkModule.decodeMetrics ? 'ready' : 'unavailable';
     if (!sdkModule.decodeMetrics) { live.presage.lastDecodeError = this.decoderError ?? 'The SDK metrics decoder is not available.'; console.warn(`[presage] ${live.presage.lastDecodeError}`); }
-    sdk.on('metrics', ((buffer: Buffer) => {
+    // SDK events arrive outside any request, so an exception in a handler would be uncaught and take
+    // the whole server (and every in-memory session) down. Each handler is isolated and logged instead.
+    const on = (event: string, handler: (...args: never[]) => void) => sdk.on(event, ((...args: never[]) => {
+      try { handler(...args); }
+      catch (error) { console.error(`[presage] window ${live.window.id}: '${event}' handler failed:`, error instanceof Error ? error.stack ?? error.message : error); }
+    }) as (...args: never[]) => void);
+    on('metrics', ((buffer: Buffer) => {
       live.presage.metricsPackets++;
       let decoded: unknown;
       try { decoded = sdkModule.decodeMetrics ? sdkModule.decodeMetrics(buffer) : undefined; }
@@ -385,14 +401,14 @@ export class MonitoringService {
         live.lastMetricUs[reading.metric] = timestampUs; live.readings.push(reading);
       }
     }) as (...args: never[]) => void);
-    sdk.on('validationStatus', ((code: number, timestampUs: number, hint: string) => {
+    on('validationStatus', ((code: number, timestampUs: number, hint: string) => {
       const name = VALIDATION_CODES[code] ?? `CODE_${code}`;
-      const at = Number.isFinite(timestampUs) && timestampUs > 0 ? new Date(timestampUs / 1000).toISOString() : new Date().toISOString();
+      const at = isoAt(Number.isFinite(timestampUs) && timestampUs > 0 ? timestampUs / 1000 : Date.now());
       live.notes.push({ at, code: name, hint: typeof hint === 'string' ? hint.slice(0, 200) : '' });
     }) as (...args: never[]) => void);
     // Presage's own report of whether each frame entered processing: the true processing rate.
-    sdk.on('frameSentThrough', ((sent: boolean, timestampUs: number) => { if (sent && Number.isFinite(timestampUs)) { live.consumed.push(timestampUs / 1000); live.stats.processed = (live.stats.processed ?? 0) + 1; } else if (!sent) live.stats.notProcessed++; }) as (...args: never[]) => void);
-    sdk.on('error', ((code: number, message: string, retryable: boolean) => {
+    on('frameSentThrough', ((sent: boolean, timestampUs: number) => { if (sent && Number.isFinite(timestampUs)) { live.consumed.push(timestampUs / 1000); live.stats.processed = (live.stats.processed ?? 0) + 1; } else if (!sent) live.stats.notProcessed++; }) as (...args: never[]) => void);
+    on('error', ((code: number, message: string, retryable: boolean) => {
       const detail = typeof message === 'string' ? message.slice(0, 200) : '';
       live.notes.push({ at: new Date().toISOString(), code: `ERROR_${code}`, hint: detail || 'Processing error.' });
       live.lastError = SDK_FAILURES[code] ?? (detail || 'Presage processing stopped.');
@@ -401,7 +417,7 @@ export class MonitoringService {
       if (!retryable) live.failure = live.lastError;
     }) as (...args: never[]) => void);
     // A retryable error can still leave the pipeline in its error state (e.g. the key could not be verified).
-    sdk.on('processingStatus', ((status: number) => {
+    on('processingStatus', ((status: number) => {
       live.presage.processing = PROCESSING[status] ?? live.presage.processing;
       if (status === PROCESSING_STATUS_ERROR) live.failure ??= live.lastError ?? 'Presage processing stopped.';
     }) as (...args: never[]) => void);
@@ -450,7 +466,7 @@ export class MonitoringService {
     }
     for (const reading of live.readings.splice(0).sort((a, b) => a.atMs - b.atMs)) {
       const sample: PhysiologySample = {
-        at: new Date(reading.atMs).toISOString(), metric: reading.metric, value: Math.round(reading.value * 10) / 10,
+        at: isoAt(reading.atMs), metric: reading.metric, value: Math.round(reading.value * 10) / 10,
         confidence: Math.round(reading.confidence), stable: reading.stable,
         valid: isValidReading(reading.metric, reading.value, reading.confidence, reading.stable, reading.atMs - (live.originMs ?? reading.atMs)),
       };
@@ -503,6 +519,20 @@ export class MonitoringService {
   private sweep() {
     const cutoff = Date.now() - LIMITS.idleMs;
     for (const live of this.live.values()) if (live.window.status === 'active' && live.lastActivity < cutoff) void this.finish(live, 'ended', 'No frames arrived (tab closed, refreshed or disconnected).');
+    this.logMemory();
+  }
+
+  /**
+   * While Presage runs, logs the process memory every 15 s. The native runtime (and a CPU Vulkan
+   * driver on GPU-less hosts) can use far more than Node's heap; a host's out-of-memory kill leaves
+   * no other trace, so this shows how close it got.
+   */
+  private logMemory() {
+    const active = [...this.live.values()].filter((live) => live.window.status === 'active' && live.sdk).length;
+    if (!active || Date.now() - this.memoryLoggedAt < 15_000) return;
+    this.memoryLoggedAt = Date.now();
+    const { rss, heapUsed } = process.memoryUsage();
+    console.log(`[presage] memory: rss ${Math.round(rss / 1048576)} MB, js heap ${Math.round(heapUsed / 1048576)} MB, ${active} active window${active === 1 ? '' : 's'}`);
   }
 }
 
