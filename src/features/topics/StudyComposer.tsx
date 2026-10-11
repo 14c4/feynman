@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { MATERIAL_LIMITS, PRACTICE_LIMITS } from '../../../shared/types';
 import { Button } from '../../components/Button';
+import { DictationButton } from '../../components/DictationButton';
 import { PracticeIcon } from '../../components/practice/PracticeIcon';
 
 interface StudyComposerProps {
@@ -61,8 +62,11 @@ export function StudyComposer({ description, files, error, busy, onDescription, 
 
       <div className="field">
         <label className="field-label field-label--lg" htmlFor="description">Anything to add?</label>
-        <textarea id="description" className="textarea composer-detail" rows={3} maxLength={PRACTICE_LIMITS.description} value={description} disabled={busy} onChange={(event) => onDescription(event.target.value)}
-          placeholder={files.length ? 'e.g. Focus on chapter 3, or what I found confusing' : 'Or just describe it: how light energy becomes chemical energy in a leaf'} aria-describedby="description-hint" />
+        <div className="dictate-wrap">
+          <textarea id="description" className="textarea composer-detail" rows={3} maxLength={PRACTICE_LIMITS.description} value={description} disabled={busy} onChange={(event) => onDescription(event.target.value)}
+            placeholder={files.length ? 'e.g. Focus on chapter 3, or what I found confusing' : 'Or just describe it: how light energy becomes chemical energy in a leaf'} aria-describedby="description-hint" />
+          <DictationButton value={description} maxLength={PRACTICE_LIMITS.description} disabled={busy} label="description" onChange={onDescription} />
+        </div>
         <p id="description-hint" className="field-hint">{files.length ? 'Your upload is enough on its own. Add a line only if you want to steer the questions.' : 'Without a file, a specific idea you’ve already studied works best.'}</p>
       </div>
     </div>

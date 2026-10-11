@@ -4,6 +4,7 @@ import type { AssessmentAnswer, ConfidenceLevel, PracticeQuestion } from '../../
 import { CONFIDENCE_LABELS } from '../../../shared/insights';
 import { PRACTICE_LIMITS } from '../../../shared/types';
 import { Button } from '../../components/Button';
+import { DictationButton } from '../../components/DictationButton';
 import { PracticeIcon } from '../../components/practice/PracticeIcon';
 
 export type SaveState = 'unavailable' | 'local' | 'saving' | 'saved' | 'clean';
@@ -53,19 +54,25 @@ export function QuestionCard({ question, answer, conceptTitle, index, count, sav
 
       <div className="field">
         <label className="field-label" htmlFor="answer">Your answer</label>
-        <textarea ref={field} id="answer" className="textarea qcard-answer" rows={6} maxLength={PRACTICE_LIMITS.answer} value={answer.text} disabled={disabled}
-          onChange={(event) => onChange({ ...answer, text: event.target.value, skipped: false })} placeholder="Here’s how I understand it…" />
+        <div className="dictate-wrap">
+          <textarea ref={field} id="answer" className="textarea qcard-answer" rows={6} maxLength={PRACTICE_LIMITS.answer} value={answer.text} disabled={disabled}
+            onChange={(event) => onChange({ ...answer, text: event.target.value, skipped: false })} placeholder="Here’s how I understand it…" />
+          <DictationButton value={answer.text} maxLength={PRACTICE_LIMITS.answer} disabled={disabled} label="answer" onChange={(text) => onChange({ ...answer, text, skipped: false })} />
+        </div>
       </div>
 
       {question.supportsWorking && <details className="qcard-working" key={`working-${question.id}`} open={answer.working ? true : undefined}>
         <summary><PracticeIcon name="chevron" size={14} />Show your working <span className="optional">optional</span></summary>
         <div className="field"><label className="sr-only" htmlFor="working">Reasoning, calculations, or rough notes</label>
-          <textarea id="working" className="textarea qcard-working-field" rows={4} maxLength={PRACTICE_LIMITS.working} value={answer.working} disabled={disabled}
-            onChange={(event) => onChange({ ...answer, working: event.target.value, skipped: false })} placeholder="Reasoning, calculations, rough notes…" /></div>
+          <div className="dictate-wrap">
+            <textarea id="working" className="textarea qcard-working-field" rows={4} maxLength={PRACTICE_LIMITS.working} value={answer.working} disabled={disabled}
+              onChange={(event) => onChange({ ...answer, working: event.target.value, skipped: false })} placeholder="Reasoning, calculations, rough notes…" />
+            <DictationButton value={answer.working ?? ''} maxLength={PRACTICE_LIMITS.working} disabled={disabled} label="working" onChange={(working) => onChange({ ...answer, working, skipped: false })} />
+          </div></div>
       </details>}
 
       <fieldset className="confidence" disabled={disabled}>
-        <legend>How sure are you? <span className="optional">optional · no penalty for being honest</span></legend>
+        <legend>How sure are you?</legend>
         <div className="confidence-options">{(['low', 'medium', 'high'] as ConfidenceLevel[]).map((level) => <button key={level} type="button"
           className={`confidence-option confidence-option--${level}`} aria-pressed={answer.confidence === level}
           onClick={() => onChange(answer.confidence === level

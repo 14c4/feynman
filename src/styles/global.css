@@ -159,3 +159,12 @@ button.chip:hover:not(:disabled) { border-color: var(--green-300); background: v
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
 }
+
+/* Dictation (speech-to-text) */
+.dictate-wrap { position: relative; display: grid; }
+.dictate-wrap > textarea { padding-right: 48px; }
+.dictate-wrap > .dictate-button { position: absolute; right: 8px; bottom: 8px; }
+.dictate-button.is-listening { background: var(--accent-soft, var(--surface-sunken)); color: var(--danger, var(--text)); animation: dictate-pulse 1.4s ease-in-out infinite; }
+.dictate-error { font-size: var(--text-sm, 0.85rem); color: var(--muted); }
+@keyframes dictate-pulse { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 18%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .dictate-button.is-listening { animation: none; } }

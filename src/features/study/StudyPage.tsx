@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { ConversationProvider, useConversation } from '@elevenlabs/react';
 import { Link, Navigate, useParams } from 'react-router';
 import { Button } from '../../components/Button';
+import { DictationButton } from '../../components/DictationButton';
 import { EmptyState } from '../../components/EmptyState';
 import type { AssessmentAttempt, PracticeSession, TranscriptMessage } from '../../../shared/types';
 import { PRACTICE_LIMITS } from '../../../shared/types';
@@ -33,7 +34,7 @@ function StatusCard({ title, children, busy = false, tone = 'neutral', icon = 'i
 }
 
 function AssessmentPanel({ session, attempt }: { session: PracticeSession; attempt: AssessmentAttempt }) {
-  const { updateDraft, submitAssessment, busy, draftStatus, saveDraft, startAttempt } = useSessions();
+  const { updateDraft, submitAssessment, busy, draftStatus, startAttempt } = useSessions();
   const [submitting, setSubmitting] = useState(false);
   const index = attempt.currentQuestionIndex;
   const question = attempt.questions[index];
@@ -60,7 +61,6 @@ function AssessmentPanel({ session, attempt }: { session: PracticeSession; attem
         conceptTitle={session.concepts.find((concept) => concept.id === question.conceptId)?.title}
         submitLabel={recheck ? 'Submit follow-up' : 'Check my answers'}
         onChange={(updated) => updateDraft(session.id, attempt.id, updated)} onBack={() => updateDraft(session.id, attempt.id, answer, index - 1)} onNext={move} />
-      {status === 'local' && <Button variant="secondary" size="sm" onClick={() => void saveDraft(session.id).catch(() => undefined)}><PracticeIcon name="refresh" size={14} />Retry saving answers</Button>}
     </div>
   </div>;
 }
@@ -136,6 +136,7 @@ function TextConversation({ session }: { session: PracticeSession }) {
         <textarea ref={input} id="typed-explanation" value={draft} rows={2} maxLength={PRACTICE_LIMITS.textMessage} disabled={working || awaiting}
           onChange={(event) => setDraft(event.target.value)} placeholder={awaiting ? 'Waiting for Alex…' : 'Explain it to Alex in your own words…'}
           onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} />
+        <DictationButton value={draft} maxLength={PRACTICE_LIMITS.textMessage} disabled={working || awaiting} label="message to Alex" onChange={setDraft} />
         <Button aria-label="Send to Alex" disabled={working || awaiting || !draft.trim() || learnerTurns >= PRACTICE_LIMITS.textTurns} onClick={() => void send()}><PracticeIcon name="send" size={16} /><span className="send-label">Send</span></Button>
       </div>
       <div className="composer-meta"><span>Enter to send · Shift+Enter for a new line · <span className="mono">{learnerTurns}/{PRACTICE_LIMITS.textTurns}</span></span>
@@ -346,7 +347,8 @@ function StudyContent({ sessionId }: { sessionId: string }) {
   const heading = HEADINGS[session.stage];
   const showOverview = fresh && !overviewDone;
   const focusField = <>
-    <div className="field status-card-field"><label className="field-label" htmlFor="clarification">Your focus</label><textarea id="clarification" className="textarea" value={clarification} maxLength={PRACTICE_LIMITS.description} onChange={(event) => setClarification(event.target.value)} rows={3} /></div>
+    <div className="field status-card-field"><label className="field-label" htmlFor="clarification">Your focus</label><div className="dictate-wrap"><textarea id="clarification" className="textarea" value={clarification} maxLength={PRACTICE_LIMITS.description} onChange={(event) => setClarification(event.target.value)} rows={3} />
+      <DictationButton value={clarification} maxLength={PRACTICE_LIMITS.description} label="focus" onChange={setClarification} /></div></div>
     <div className="button-row"><Button disabled={!clarification.trim()} onClick={() => void prepareSession(sessionId, clarification).catch(() => undefined)}>Continue</Button></div>
   </>;
   return <div className={`study study--${session.stage}`}>
