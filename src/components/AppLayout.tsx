@@ -6,7 +6,7 @@ import { useAuth } from '../state/useAuth';
 import { StudyStepper } from './StudyStepper';
 import './layout.css';
 
-function Brand() {
+export function Brand() {
   return <Link to="/" className="brand" aria-label="feynman.ai home"><span className="brand-mark" aria-hidden="true">f</span><span>feynman<span className="brand-suffix">.ai</span></span></Link>;
 }
 
@@ -48,7 +48,7 @@ export function AppLayout() {
     return <div className="shell shell--focus">
       <a className="skip-link" href="#main">Skip to content</a>
       <header className="focus-bar">
-        <div className="focus-bar-start"><Link to="/" className="icon-button" aria-label="Back to home"><PracticeIcon name="back" size={18} /></Link><Brand /></div>
+        <div className="focus-bar-start"><Link to="/app" className="icon-button" aria-label="Back to home"><PracticeIcon name="back" size={18} /></Link><Brand /></div>
         {session && <StudyStepper session={session} />}
         <div className="focus-bar-end"><ModeBadge mode={mode} /></div>
       </header>

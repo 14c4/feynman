@@ -47,7 +47,7 @@ export function ResultsPage() {
   const stronger = concepts.filter((item) => item.outcome === 'improved' || item.outcome === 'solid');
   const weaker = concepts.filter((item) => item.last && item.last.score < item.last.maxScore);
   const weakTitles = weaker.map((item) => item.concept.title);
-  const practiceAgain = () => void navigate('/', { state: { topic: session.title, description: `Practice ${weakTitles.join(', ')} from ${session.title}.` } });
+  const practiceAgain = () => void navigate('/app', { state: { topic: session.title, description: `Practice ${weakTitles.join(', ')} from ${session.title}.` } });
   const pending = conversations.some((segment) => segment.transcriptStatus === 'pending');
 
   return <div className="results">
@@ -55,7 +55,7 @@ export function ResultsPage() {
       <span className="eyebrow"><PracticeIcon name="leaf" size={14} />{session.title}</span>
       <div className="results-title">
         <h1 tabIndex={-1}>Here’s what changed.</h1>
-        <Button disabled={busy[sessionId]} onClick={async () => { try { await finishSession(sessionId); await navigate('/'); } catch { /* state exposes operation error */ } }}>Finish session<PracticeIcon name="check" size={16} /></Button>
+        <Button disabled={busy[sessionId]} onClick={async () => { try { await finishSession(sessionId); await navigate('/app'); } catch { /* state exposes operation error */ } }}>Finish session<PracticeIcon name="check" size={16} /></Button>
       </div>
     </header>
 
@@ -102,7 +102,7 @@ export function ResultsPage() {
       <div><span className="eyebrow">What to do next</span>
         <h3 id="next-heading">{weaker.length ? `Explain ${weakTitles.length === 1 ? weakTitles[0] : 'these ideas'} again in a fresh session` : 'Try teaching Alex a new topic'}</h3>
         <p className="muted small">{weaker.length ? 'Read the feedback above, revisit your notes on the gaps, then teach it again with new questions.' : 'Explaining something new is the best way to keep the habit going.'}</p></div>
-      {weaker.length ? <Button variant="secondary" onClick={practiceAgain}>Practice again<PracticeIcon name="arrow" size={16} /></Button> : <Link className="button button--secondary" to="/">New session<PracticeIcon name="arrow" size={16} /></Link>}
+      {weaker.length ? <Button variant="secondary" onClick={practiceAgain}>Practice again<PracticeIcon name="arrow" size={16} /></Button> : <Link className="button button--secondary" to="/app">New session<PracticeIcon name="arrow" size={16} /></Link>}
     </section>
   </div>;
 }

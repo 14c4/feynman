@@ -8,6 +8,7 @@ import { EmptyState } from '../components/EmptyState';
 import { HomePage } from '../features/topics/HomePage';
 import { StudyPage } from '../features/study/StudyPage';
 import { ResultsPage } from '../features/feedback/ResultsPage';
+import { LandingPage } from '../features/landing/LandingPage';
 
 function Providers() {
   return <SessionProvider><AuthProvider><MonitoringProvider><Outlet /></MonitoringProvider></AuthProvider></SessionProvider>;
@@ -17,9 +18,12 @@ function Providers() {
 const router = createBrowserRouter([{
   element: <Providers />,
   children: [{
+    // The public landing page has its own chrome; the working app starts at /app.
+    path: '/', element: <LandingPage />,
+  }, {
     element: <AppLayout />,
     children: [
-      { path: '/', element: <HomePage /> },
+      { path: '/app', element: <HomePage /> },
       { path: '/account', element: <AccountPage /> },
       { path: '/study/:sessionId', element: <StudyPage /> },
       { path: '/results/:sessionId', element: <ResultsPage /> },

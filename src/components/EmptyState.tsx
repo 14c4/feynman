@@ -7,7 +7,7 @@ export function EmptyState({ title, description, loading = false }: { title: str
       <span className="empty-icon">{loading ? <span className="spinner" aria-hidden="true" /> : <PracticeIcon name="leaf" />}</span>
       <h1 tabIndex={-1}>{title}</h1>
       <p className="muted">{description}</p>
-      {!loading && <Link className="button button--primary" to="/">Back to home <PracticeIcon name="arrow" size={16} /></Link>}
+      {!loading && <Link className="button button--primary" to="/app">Back to home <PracticeIcon name="arrow" size={16} /></Link>}
     </section>
   );
 }

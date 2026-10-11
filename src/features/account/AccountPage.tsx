@@ -26,7 +26,7 @@ export function AccountPage() {
     <p className="muted">{user.email}</p>
     <p className="account-lede">Your sessions are saved to your account, so you can leave and come back to them any time from Home.</p>
     <div className="button-row">
-      <Link className="button button--primary" to="/">Go to your sessions</Link>
+      <Link className="button button--primary" to="/app">Go to your sessions</Link>
       <Button variant="secondary" onClick={() => void signOut().then(() => navigate('/'))}>Sign out</Button>
     </div>
   </section>;
@@ -38,8 +38,8 @@ export function AccountPage() {
     if (mode === 'signup' && password.length < MIN_PASSWORD) { setError(`Use at least ${MIN_PASSWORD} characters for your password.`); return; }
     setBusy(true);
     try {
-      if (mode === 'signin') { await signIn(email, password); await navigate('/'); }
-      else if (await signUp(email, password) === 'signed-in') await navigate('/');
+      if (mode === 'signin') { await signIn(email, password); await navigate('/app'); }
+      else if (await signUp(email, password) === 'signed-in') await navigate('/app');
       else { setNotice(`We sent a confirmation link to ${email.trim()}. Open it, then come back and sign in.`); setMode('signin'); setPassword(''); }
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Something went wrong. Please try again.'); }
     finally { setBusy(false); }
@@ -75,7 +75,7 @@ export function AccountPage() {
       </div>
       {error && <p className="form-error" role="alert"><PracticeIcon name="alert" size={16} />{error}</p>}
       <Button type="submit" size="lg" disabled={busy || !email.trim() || !password}>{busy ? <><span className="spinner" aria-hidden="true" />{signup ? 'Creating account…' : 'Signing in…'}</> : signup ? 'Create account' : 'Sign in'}</Button>
-      <p className="account-foot muted small">Prefer not to sign in? <Link className="text-link" to="/">Practice as a guest</Link>. Guest sessions aren’t saved.</p>
+      <p className="account-foot muted small">Prefer not to sign in? <Link className="text-link" to="/app">Practice as a guest</Link>. Guest sessions aren’t saved.</p>
     </form>
   </section>;
 }
